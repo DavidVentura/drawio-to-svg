@@ -468,9 +468,10 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         # FIXME HACK
         points = [source_point] + points
 
-    commands: list[svg.MoveTo | svg.LineTo] = []
-    for curr, nxt in zip(points, points[1:]):
-        commands.extend([svg.MoveTo(curr.x, curr.y), svg.LineTo(nxt.x, nxt.y)])
+    start = points[0]
+    commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
+    for point in points[1:]:
+        commands.append(svg.LineTo(point.x, point.y))
     optargs = {}
 
     if arrow.start_style == "classic":
@@ -482,6 +483,7 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         svg.Path(
             stroke=arrow.strokeColor,
             d=commands,
+            fill="none",
             **optargs,
         )
     ]
