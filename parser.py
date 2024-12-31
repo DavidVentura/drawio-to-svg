@@ -49,6 +49,36 @@ class Cell:
 
 
 @dataclass
+class Text:
+    id: str
+    value: str
+    geometry: Geometry
+    strokeColor: str
+    fontSize: str
+    alignment: str
+    fontFamily: str
+    verticalAlign: str
+
+    @staticmethod
+    def from_styles(id_: str, text: str, geometry: Geometry, style: dict[str, str]) -> "Text":
+        va_lut = {
+                "middle": "center",
+                "bottom": "end",
+                "top": "start",
+        }
+        return Text(
+            id=id_,
+            value=text,
+            geometry=geometry,
+            strokeColor=style.get("strokeColor", "#000"),
+            fontSize=style.get("fontSize", "12px"),
+            alignment=style.get("align", "center"),
+            fontFamily=style.get("fontFamily", "Helvetica"),
+            verticalAlign=va_lut[style.get("verticalAlign", "middle")],
+        )
+
+
+@dataclass
 class Point:
     x: float
     y: float
@@ -162,17 +192,6 @@ def parse_arrow_points(geom: ET.Element) -> tuple[dict[str, Point], list[Point]]
         for point in array_elem.findall("mxPoint"):
             array_points.append(Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
 
-    # A "free standing" arrow (no source/dest) has start/end points directly inside geom, without Array
-    direct_start_end = list(geom.findall("mxPoint"))
-    assert len(direct_start_end) in [0, 2]
-    if len(direct_start_end):
-        # start
-        point = direct_start_end[0]
-        array_points.insert(0, Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
-        # end
-        point = direct_start_end[1]
-        array_points.append(Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
-
     return (points, array_points)
 
 
@@ -181,8 +200,8 @@ def parse_arrow(cell: ET.Element) -> Arrow:
     geometry = parse_geometry(geom_xml)
     named_points, anon_points = parse_arrow_points(geom_xml)
     styles = parse_styles(cell.get("style"))
-    start_style=styles.get("startArrow", "none")
-    end_style=styles.get("endArrow", "classic")
+    start_style = styles.get("startArrow", "none")
+    end_style = styles.get("endArrow", "classic")
 
     if cell.get("source"):
         source = ArrowAtNode(
@@ -190,11 +209,8 @@ def parse_arrow(cell: ET.Element) -> Arrow:
             X=opt_float(styles.get("exitX")),
             Y=opt_float(styles.get("exitY")),
         )
-    elif "sourcePoint" in named_points:
-        source = named_points["sourcePoint"]
     else:
-        assert len(anon_points) == 2 # "Free standing" arrow
-        source = anon_points[0]
+        source = named_points["sourcePoint"]
 
     if cell.get("target"):
         target = ArrowAtNode(
@@ -202,11 +218,8 @@ def parse_arrow(cell: ET.Element) -> Arrow:
             X=opt_float(styles.get("entryX")),
             Y=opt_float(styles.get("entryY")),
         )
-    elif "targetPoint" in named_points:
-        target = named_points["targetPoint"]
     else:
-        assert len(anon_points) == 2 # "Free standing" arrow
-        target = anon_points[1]
+        target = named_points["targetPoint"]
 
     arr = Arrow(
         id=cell.get("id"),
@@ -234,11 +247,14 @@ def parse_mxfile(xml_string: str) -> MxFile:
 
         cells = []
         for cell in model_elem.findall(".//mxCell"):
+            styles = parse_styles(cell.get("style"))
             if cell.get("edge") == "1":
                 c = parse_arrow(cell)
+            elif styles.get("text") is not None:
+                geometry = parse_geometry(cell.find("mxGeometry"))
+                c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, styles)
             else:
                 geometry = parse_geometry(cell.find("mxGeometry"))
-                styles = parse_styles(cell.get("style"))
                 c = Cell(
                     id=cell.get("id"),
                     value=cell.get("value"),
@@ -262,6 +278,39 @@ def parse_mxfile(xml_string: str) -> MxFile:
         diagrams.append(Diagram(name=diagram.get("name"), id=diagram.get("id"), model=model))
 
     return MxFile(version=root.get("version"), diagrams=diagrams)
+
+
+@dataclass
+class HTMLDiv(svg.Element):
+    element_name: str = "div"
+    xmlns: str = "http://www.w3.org/1999/xhtml"
+
+
+@dataclass
+class HTMLSpan(svg.Element):
+    text: str
+    element_name: str = "span"
+
+
+def render_text(text: Text) -> svg.Element:
+    # Text wrapping is not supported by `Text`
+    # Need to use `foreignObject` with a <p> HTML element
+    t = svg.ForeignObject(
+        x=text.geometry.x,
+        y=text.geometry.y,
+        width=text.geometry.width,
+        height=text.geometry.height,
+        elements=[
+            HTMLDiv(
+                elements=[HTMLSpan(text=text.value.replace("<", ""), style="width: 100%")],
+                style=f"height: 100%; display: flex; flex-direction: row; align-items: {text.verticalAlign}",
+            )
+        ],
+        style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily};",
+        # stroke=text.strokeColor,
+        # text=text.value.replace("<", "!"),  # TODO parse HTML to italic/bold
+    )
+    return t
 
 
 def render_rect(cell: Cell) -> list:
@@ -301,20 +350,30 @@ def render_rect(cell: Cell) -> list:
         y=cell.geometry.y + dY,
         style=f"transform: translate({tX}%, {tY}%); transform-box: content-box",
     )
+    content = render_text(Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style))
     # align
     # verticalAlign
     # r.elements = [content]
     return [r, content]
 
 
-def render_source_arrow_at_node(arrow: Arrow, target_point: Point) -> list[Point]:
+@dataclass
+class SArrPoints:
+    source: Point
+    source_margin: Point | None
+    dst_margin: Point
+
+
+def render_source_arrow_at_node(arrow: Arrow, target_point: Point) -> SArrPoints:
+    """
+    Returns 2/3 points: source, margin_source, margin_dest?
+    """
     tnode = lut[arrow.target.node]
     node = lut[arrow.source.node]
     # TODO: source X/Y is usually None, as "best fit" is desired
     # need to find: closest side to dest, then use the center of that side
     closestXFactor = -1.0
     closestYFactor = -1.0
-    print(arrow)
     if arrow.source.X is None:
         assert arrow.source.Y is None, "otherwise, how is this arrow freestanding?"
         assert len(arrow.points) == 0, "how can the arrow be freestanding with pinned points"
@@ -334,47 +393,45 @@ def render_source_arrow_at_node(arrow: Arrow, target_point: Point) -> list[Point
 
     sx = node.geometry.x + node.geometry.width * (arrow.source.X or closestXFactor)
     sy = node.geometry.y + node.geometry.height * (arrow.source.Y or closestYFactor)
-    points = [Point(sx, sy)]
+    spoint = Point(sx, sy)
+    smargin = None
+    dmargin = None
 
     if arrow.source.X is None:
-        # also, there's a 20px point perp to the side, from the start/end points
         # if sx==dx && abs(sy-dy) < 40, only add the spoint
         # TODO: some degenerate cases (like dy==sy when chosen side=top+bot)
         match (closestXFactor, closestYFactor):
             case (0.5, 0.0):  # Top Center
-                points.append(Point(sx, sy - 20))
+                smargin = Point(sx, sy - 20)
             case (0.5, 1.0):  # Bottom Center
-                points.append(Point(sx, sy + 20))
+                smargin = Point(sx, sy + 20)
             case (1.0, 0.5):  # Right middle
-                points.append(Point(sx + 20, sy))
+                smargin = Point(sx + 20, sy)
             case (0.0, 0.5):  # Left middle
-                points.append(Point(sx - 20, sy))
+                smargin = Point(sx - 20, sy)
             case _:
                 assert False, "invalid closestX/Y Factors"
 
     dx = target_point.x
     dy = target_point.y
     possible_dx_imm = [Point(dx + 20, dy), Point(dx - 20, dy), Point(dx, dy + 20), Point(dx, dy - 20)]
-    if len(points):  # is this always true? FIXME??
-        margin_from_src = points[0]
-        # TODO: cases where entry to target very close to exit point
 
-        margin_from_dst = None
-        mindist = None
+    mindist = None
 
-        for p in possible_dx_imm:
-            if tnode.contains(p):
-                # do not add potential points inside the target node
-                # kinda degenerate case of the end arrow being _inside_ the node
-                # also the edges!!
-                continue
-            distance = margin_from_src.distance_to(p)
-            if mindist is None or distance <= mindist:
-                mindist = distance
-                margin_from_dst = p
-        assert margin_from_dst is not None
-        points.append(margin_from_dst)
-    return points
+    margin_from_src = smargin or spoint
+    # TODO: cases where entry to target very close to exit point
+    for p in possible_dx_imm:
+        # do not add potential points inside the target node, includng the edges
+        if tnode.contains(p):
+            continue
+        distance = margin_from_src.distance_to(p)
+        if mindist is None or distance <= mindist:
+            mindist = distance
+            dmargin = p
+    assert dmargin is not None
+
+    return SArrPoints(spoint, smargin, dmargin)
+
 
 def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
     dx = dy = 0
@@ -386,25 +443,31 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
     else:
         target_point = arrow.target
 
-    points = []
+    spoints: SArrPoints | None = None
     if isinstance(arrow.source, ArrowAtNode):
-        points = render_source_arrow_at_node(arrow, target_point)
+        # start, post_start?, pre_end?
+        spoints = render_source_arrow_at_node(arrow, target_point)
+        source_point = spoints.source
+    else:
+        source_point = arrow.source
 
-    if arrow.points:
-        print(arrow.points)
-        assert len(points) in [0, 2] # either empty or start-end
-        if len(points) == 2:
-            # only take the start "margin" point
-            points = [points[0]] + arrow.points
-        else:
-            print("didn't have pre points")
-            points = arrow.points
+    points = arrow.points
+
+    if spoints is not None:
+        if spoints.source_margin is not None:
+            points = [spoints.source_margin] + points
+        points = points + [spoints.dst_margin]
 
     if target_point not in points:
         # target here is dupe?
         # FIXME HACK
-        print('asdasdasd')
         points = points + [target_point]
+
+    if source_point not in points:
+        # target here is dupe?
+        # FIXME HACK
+        points = [source_point] + points
+
     commands: list[svg.MoveTo | svg.LineTo] = []
     for curr, nxt in zip(points, points[1:]):
         commands.extend([svg.MoveTo(curr.x, curr.y), svg.LineTo(nxt.x, nxt.y)])
@@ -457,8 +520,10 @@ for cell in root.cells:
     if cell.geometry is None:
         continue
     if isinstance(cell, Arrow):
-        pprint.pprint(cell)
         doc.elements.extend(render_arrow(cell, lut))
+        continue
+    elif isinstance(cell, Text):
+        doc.elements.append(render_text(cell))
         continue
     # pprint.pprint(cell)
     # Assuming rect
