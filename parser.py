@@ -1,7 +1,8 @@
 import math
-import pprint
 
 import svg
+
+import pather
 
 from dataclasses import dataclass
 from typing import List, Optional
@@ -62,9 +63,9 @@ class Text:
     @staticmethod
     def from_styles(id_: str, text: str, geometry: Geometry, style: dict[str, str]) -> "Text":
         va_lut = {
-                "middle": "center",
-                "bottom": "end",
-                "top": "start",
+            "middle": "center",
+            "bottom": "end",
+            "top": "start",
         }
         return Text(
             id=id_,
@@ -85,6 +86,9 @@ class Point:
 
     def distance_to(self, other: "Point") -> float:
         return math.sqrt((other.x - self.x) ** 2 + (other.y - self.y) ** 2)
+
+    def __sub__(self, other: "Point") -> "Point":
+        return Point(self.x - other.x, self.y - other.y)
 
 
 @dataclass
@@ -173,32 +177,45 @@ def parse_styles(styles: str | None) -> dict[str, str]:
     return ret
 
 
-# keys are sourcePoint, targetPoint
-# FIXME ugh
-def parse_arrow_points(geom: ET.Element) -> tuple[dict[str, Point], list[Point]]:
-    points = {}
+@dataclass
+class ArrowPoints:
+    source: Point | None
+    target: Point | None
+    extra: list[Point]
+
+
+def parse_arrow_points(geom: ET.Element) -> ArrowPoints:
+    sp = None
+    tp = None
+    extra = []
     for point in geom.findall("mxPoint"):
-        point_type = point.get("as")
-        assert point_type in ["sourcePoint", "targetPoint"]
-        points[point_type] = Point(
+        type_ = point.get("as")
+        point = Point(
             x=float(point.get("x", 0)),
             y=float(point.get("y", 0)),
         )
-    # A source/target arrow with manually set points uses Array
-    array_points = []
+        match type_:
+            case "sourcePoint":
+                sp = point
+            case "targetPoint":
+                tp = point
+            case _:
+                raise ValueError("")
 
+    # A source/target arrow with manually set points uses Array
     array_elem = geom.find("Array")
     if array_elem is not None:
         for point in array_elem.findall("mxPoint"):
-            array_points.append(Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
+            extra.append(Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
 
-    return (points, array_points)
+    return ArrowPoints(sp, tp, extra)
 
 
 def parse_arrow(cell: ET.Element) -> Arrow:
     geom_xml = cell.find("mxGeometry")
+    assert geom_xml is not None
     geometry = parse_geometry(geom_xml)
-    named_points, anon_points = parse_arrow_points(geom_xml)
+    arrow_points = parse_arrow_points(geom_xml)
     styles = parse_styles(cell.get("style"))
     start_style = styles.get("startArrow", "none")
     end_style = styles.get("endArrow", "classic")
@@ -210,7 +227,7 @@ def parse_arrow(cell: ET.Element) -> Arrow:
             Y=opt_float(styles.get("exitY")),
         )
     else:
-        source = named_points["sourcePoint"]
+        source = arrow_points.source
 
     if cell.get("target"):
         target = ArrowAtNode(
@@ -219,7 +236,7 @@ def parse_arrow(cell: ET.Element) -> Arrow:
             Y=opt_float(styles.get("entryY")),
         )
     else:
-        target = named_points["targetPoint"]
+        target = arrow_points.target
 
     arr = Arrow(
         id=cell.get("id"),
@@ -230,7 +247,7 @@ def parse_arrow(cell: ET.Element) -> Arrow:
         source=source,
         target=target,
         strokeColor=styles.get("strokeColor", "#000"),
-        points=anon_points,
+        points=arrow_points.extra,
         start_style=start_style,
         end_style=end_style,
     )
@@ -307,8 +324,6 @@ def render_text(text: Text) -> svg.Element:
             )
         ],
         style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily};",
-        # stroke=text.strokeColor,
-        # text=text.value.replace("<", "!"),  # TODO parse HTML to italic/bold
     )
     return t
 
@@ -365,16 +380,12 @@ class SArrPoints:
 
 
 def render_source_arrow_at_node(arrow: Arrow, target_point: Point) -> SArrPoints:
-    """
-    Returns 2/3 points: source, margin_source, margin_dest?
-    """
     tnode = lut[arrow.target.node]
     node = lut[arrow.source.node]
-    # TODO: source X/Y is usually None, as "best fit" is desired
-    # need to find: closest side to dest, then use the center of that side
     closestXFactor = -1.0
     closestYFactor = -1.0
     if arrow.source.X is None:
+        # when source X/Y is None, "best fit" is desired
         assert arrow.source.Y is None, "otherwise, how is this arrow freestanding?"
         assert len(arrow.points) == 0, "how can the arrow be freestanding with pinned points"
 
@@ -437,6 +448,8 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
     dx = dy = 0
     if isinstance(arrow.target, ArrowAtNode):
         tnode = lut[arrow.target.node]
+        print(tnode)
+        print(arrow.target)
         dx = tnode.geometry.x + tnode.geometry.width * arrow.target.X
         dy = tnode.geometry.y + tnode.geometry.height * arrow.target.Y
         target_point = Point(dx, dy)
@@ -451,7 +464,15 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
     else:
         source_point = arrow.source
 
-    points = arrow.points
+    # TODO: Not all points are fixed. We should still find best path
+    # from source->arrow.points[0]) or arrow.points[-1]->target
+    if len(arrow.points) == 0:
+        # An arrow with no manual points gets auto-path
+        assert spoints is not None
+        points = find_best_path(source_point, spoints.source_margin, target_point)
+    else:
+        # Manual points, set by the user
+        points = arrow.points
 
     if spoints is not None:
         if spoints.source_margin is not None:
@@ -488,10 +509,21 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         )
     ]
 
+def find_best_path(source: Point, source_margin: Point, target: Point) -> list[Point]:
+    print(f"Pathing {source} to {target}")
+    # Primary direction follows source->source_margin
+    delta = source - source_margin
+    if delta.x == 0.0:
+        main_dir = "y"
+    else:
+        main_dir = "x"
+
+    return []
 
 # r = parse_mxfile(open("inputs/simple.drawio").read())
 r = parse_mxfile(open("inputs/two-boxes-arrow.drawio").read())
-root = r.diagrams[0].model.root
+PAGE = 1
+root = r.diagrams[PAGE].model.root
 lut = {}
 for cell in root.cells:
     lut[cell.id] = cell
