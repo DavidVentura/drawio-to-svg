@@ -62,7 +62,6 @@ class ArrowAtNode:
     node: str
     X: Optional[float]
     Y: Optional[float]
-    style: str
 
 
 @dataclass
@@ -76,6 +75,8 @@ class Arrow:
     target: Point | ArrowAtNode
     strokeColor: str
     points: list[Point]
+    start_style: str
+    end_style: str
 
 
 @dataclass
@@ -153,11 +154,25 @@ def parse_arrow_points(geom: ET.Element) -> tuple[dict[str, Point], list[Point]]
             x=float(point.get("x", 0)),
             y=float(point.get("y", 0)),
         )
+    # A source/target arrow with manually set points uses Array
     array_points = []
+
     array_elem = geom.find("Array")
     if array_elem is not None:
         for point in array_elem.findall("mxPoint"):
             array_points.append(Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
+
+    # A "free standing" arrow (no source/dest) has start/end points directly inside geom, without Array
+    direct_start_end = list(geom.findall("mxPoint"))
+    assert len(direct_start_end) in [0, 2]
+    if len(direct_start_end):
+        # start
+        point = direct_start_end[0]
+        array_points.insert(0, Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
+        # end
+        point = direct_start_end[1]
+        array_points.append(Point(x=float(point.get("x", 0)), y=float(point.get("y", 0))))
+
     return (points, array_points)
 
 
@@ -166,25 +181,32 @@ def parse_arrow(cell: ET.Element) -> Arrow:
     geometry = parse_geometry(geom_xml)
     named_points, anon_points = parse_arrow_points(geom_xml)
     styles = parse_styles(cell.get("style"))
+    start_style=styles.get("startArrow", "none")
+    end_style=styles.get("endArrow", "classic")
+
     if cell.get("source"):
         source = ArrowAtNode(
             node=cell.get("source"),
             X=opt_float(styles.get("exitX")),
             Y=opt_float(styles.get("exitY")),
-            style=styles.get("startArrow", "none"),
         )
-    else:
+    elif "sourcePoint" in named_points:
         source = named_points["sourcePoint"]
+    else:
+        assert len(anon_points) == 2 # "Free standing" arrow
+        source = anon_points[0]
 
     if cell.get("target"):
         target = ArrowAtNode(
             node=cell.get("target"),
             X=opt_float(styles.get("entryX")),
             Y=opt_float(styles.get("entryY")),
-            style=styles.get("endArrow", "classic"),
         )
-    else:
+    elif "targetPoint" in named_points:
         target = named_points["targetPoint"]
+    else:
+        assert len(anon_points) == 2 # "Free standing" arrow
+        target = anon_points[1]
 
     arr = Arrow(
         id=cell.get("id"),
@@ -196,6 +218,8 @@ def parse_arrow(cell: ET.Element) -> Arrow:
         target=target,
         strokeColor=styles.get("strokeColor", "#000"),
         points=anon_points,
+        start_style=start_style,
+        end_style=end_style,
     )
     return arr
 
@@ -283,21 +307,22 @@ def render_rect(cell: Cell) -> list:
     return [r, content]
 
 
-def render_source_arrow_at_node(arrow: Arrow, dx: float, dy: float) -> list[Point]:
+def render_source_arrow_at_node(arrow: Arrow, target_point: Point) -> list[Point]:
     tnode = lut[arrow.target.node]
     node = lut[arrow.source.node]
     # TODO: source X/Y is usually None, as "best fit" is desired
     # need to find: closest side to dest, then use the center of that side
     closestXFactor = -1.0
     closestYFactor = -1.0
+    print(arrow)
     if arrow.source.X is None:
         assert arrow.source.Y is None, "otherwise, how is this arrow freestanding?"
         assert len(arrow.points) == 0, "how can the arrow be freestanding with pinned points"
 
-        if dx > node.geometry.x + node.geometry.width:
+        if target_point.x > node.geometry.x + node.geometry.width:
             closestYFactor = 0.5
             closestXFactor = 1.0
-        elif dx + node.geometry.width < node.geometry.x:
+        elif target_point.x + node.geometry.width < node.geometry.x:
             closestYFactor = 0.5
             closestXFactor = 0.0
         else:
@@ -327,6 +352,8 @@ def render_source_arrow_at_node(arrow: Arrow, dx: float, dy: float) -> list[Poin
             case _:
                 assert False, "invalid closestX/Y Factors"
 
+    dx = target_point.x
+    dy = target_point.y
     possible_dx_imm = [Point(dx + 20, dy), Point(dx - 20, dy), Point(dx, dy + 20), Point(dx, dy - 20)]
     if len(points):  # is this always true? FIXME??
         margin_from_src = points[0]
@@ -355,28 +382,39 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         tnode = lut[arrow.target.node]
         dx = tnode.geometry.x + tnode.geometry.width * arrow.target.X
         dy = tnode.geometry.y + tnode.geometry.height * arrow.target.Y
+        target_point = Point(dx, dy)
+    else:
+        target_point = arrow.target
 
     points = []
     if isinstance(arrow.source, ArrowAtNode):
-        points = render_source_arrow_at_node(arrow, dx, dy)
+        points = render_source_arrow_at_node(arrow, target_point)
+
     if arrow.points:
+        print(arrow.points)
         assert len(points) in [0, 2] # either empty or start-end
         if len(points) == 2:
             # only take the start "margin" point
             points = [points[0]] + arrow.points
         else:
+            print("didn't have pre points")
             points = arrow.points
 
-    # TODO: freestanding arrows
-    points = points + [Point(dx, dy)]
+    if target_point not in points:
+        # target here is dupe?
+        # FIXME HACK
+        print('asdasdasd')
+        points = points + [target_point]
     commands: list[svg.MoveTo | svg.LineTo] = []
     for curr, nxt in zip(points, points[1:]):
         commands.extend([svg.MoveTo(curr.x, curr.y), svg.LineTo(nxt.x, nxt.y)])
     optargs = {}
-    if isinstance(arrow.source, ArrowAtNode) and arrow.source.style == "classic":
+
+    if arrow.start_style == "classic":
         optargs["marker_start"] = "url(#arrow)"
-    if isinstance(arrow.target, ArrowAtNode) and arrow.target.style == "classic":
+    if arrow.end_style == "classic":
         optargs["marker_end"] = "url(#arrow)"
+
     return [
         svg.Path(
             stroke=arrow.strokeColor,
@@ -394,6 +432,7 @@ for cell in root.cells:
     lut[cell.id] = cell
 
 doc = svg.SVG(elements=[], viewBox="-0.5 600.5 500 60")
+assert doc.elements is not None
 doc.elements.append(
     svg.Defs(
         elements=[
@@ -418,6 +457,7 @@ for cell in root.cells:
     if cell.geometry is None:
         continue
     if isinstance(cell, Arrow):
+        pprint.pprint(cell)
         doc.elements.extend(render_arrow(cell, lut))
         continue
     # pprint.pprint(cell)
