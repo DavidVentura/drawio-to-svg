@@ -20,12 +20,12 @@ class Geometry:
 
 class StrokeStyle(enum.Enum):
     SOLID = enum.auto()
-    DOTTED_1 = enum.auto() # 1 1
-    DOTTED_2 = enum.auto() # 1 2
-    DOTTED_3 = enum.auto() # 1 4
-    DASHED_1 = enum.auto() # 2
-    DASHED_2 = enum.auto() # 8 8
-    DASHED_3 = enum.auto() # 12 12
+    DOTTED_1 = enum.auto()  # 1 1
+    DOTTED_2 = enum.auto()  # 1 2
+    DOTTED_3 = enum.auto()  # 1 4
+    DASHED_1 = enum.auto()  # 2
+    DASHED_2 = enum.auto()  # 8 8
+    DASHED_3 = enum.auto()  # 12 12
 
     @staticmethod
     def from_dash_pattern(dp: str | None) -> "StrokeStyle":
@@ -67,11 +67,13 @@ class StrokeStyle(enum.Enum):
             "stroke_dasharray": da,
         }
 
+
 @dataclass
 class Stroke:
     style: StrokeStyle
     width: int
     color: str
+
 
 @dataclass
 class Cell:
@@ -82,6 +84,12 @@ class Cell:
     geometry: Optional[Geometry]
     fillColor: str
     stroke: Stroke
+    opacity: float
+    # Labels can be right next to the actual rect
+    # regardless of the alignment within the label itself
+    labelPosition: str
+    verticalLabelPosition: str
+
     # Do not use. only for debugging
     _style: dict[str, str]
 
@@ -99,24 +107,30 @@ class Cell:
         return True
 
     def center_points_with_sides(self) -> list[tuple["Point", "Side"]]:
-        return list(zip(self.center_points(), [
-                Side.LEFT,
-                Side.RIGHT,
-                Side.TOP,
-                Side.BOTTOM,
-        ]))
+        return list(
+            zip(
+                self.center_points(),
+                [
+                    Side.LEFT,
+                    Side.RIGHT,
+                    Side.TOP,
+                    Side.BOTTOM,
+                ],
+            )
+        )
 
     def center_points(self) -> list["Point"]:
         return [
             # Left center
-            Point(self.geometry.x, self.geometry.y + self.geometry.height/2),
+            Point(self.geometry.x, self.geometry.y + self.geometry.height / 2),
             # Right center
-            Point(self.geometry.x + self.geometry.width, self.geometry.y + self.geometry.height/2),
+            Point(self.geometry.x + self.geometry.width, self.geometry.y + self.geometry.height / 2),
             # Top center
-            Point(self.geometry.x + self.geometry.width/2, self.geometry.y),
+            Point(self.geometry.x + self.geometry.width / 2, self.geometry.y),
             # Bottom center
-            Point(self.geometry.x + self.geometry.width/2, self.geometry.y + self.geometry.height)
+            Point(self.geometry.x + self.geometry.width / 2, self.geometry.y + self.geometry.height),
         ]
+
 
 @dataclass
 class Text:
@@ -165,7 +179,7 @@ class Point:
         maxx = max([self.x, other.x])
         maxy = max([self.y, other.y])
 
-        res = Point((maxx+minx)/2, (maxy+miny)/2)
+        res = Point((maxx + minx) / 2, (maxy + miny) / 2)
         return res
 
     def contains(self, other: "Point") -> bool:
@@ -368,9 +382,9 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     ss = StrokeStyle.SOLID
 
                 stroke = Stroke(
-                        style=ss,
-                        width=int(styles.get("strokeWidth", "1")),
-                        color=styles.get("strokeColor", "#000"),
+                    style=ss,
+                    width=int(styles.get("strokeWidth", "1")),
+                    color=styles.get("strokeColor", "#000"),
                 )
                 c = Cell(
                     id=cell.get("id"),
@@ -381,6 +395,11 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     _style=styles,
                     stroke=stroke,
                     fillColor=styles.get("fillColor", "#fff"),
+                    opacity=float(styles.get("opacity", "100")) / 100.0,
+                    # left center right
+                    labelPosition=styles.get("labelPosition", "center"),
+                    # top middle bottom
+                    verticalLabelPosition=styles.get("verticalLabelPosition", "middle"),
                 )
             cells.append(c)
 
@@ -436,38 +455,31 @@ def render_rect(cell: Cell) -> list:
         height=cell.geometry.height,
         stroke=cell.stroke.color,
         fill=cell.fillColor,
+        opacity=cell.opacity,
         **cell.stroke.style.as_props(),
     )
 
-    dX = cell.geometry.width / 2
-    tX = -50
-    # FIXME _style
-    match cell._style.get("align"):
-        case "left":
-            dX = 0
-            tX = 0
-        case "right":
-            dX = cell.geometry.width
-            tX = -100
-
-    dY = cell.geometry.height / 2
-    tY = 40
-    match cell._style.get("verticalAlign"):
+    # Box alignment
+    match cell.verticalLabelPosition:
         case "top":
-            dY = 0
-            tY = 75
+            box_offset_y = -cell.geometry.height
+        case "middle":
+            box_offset_y = 0
         case "bottom":
-            dY = cell.geometry.height
-            tY = -15
+            box_offset_y = cell.geometry.height
 
-    content = svg.Text(
-        text=cell.value.replace("<", "!"),  # TODO parse HTML to italic/bold
-        stroke="#000",
-        x=cell.geometry.x + dX,
-        y=cell.geometry.y + dY,
-        style=f"transform: translate({tX}%, {tY}%); transform-box: content-box",
-    )
-    content = render_text(Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style))
+    match cell.labelPosition:
+        case "left":
+            box_offset_x = -cell.geometry.width
+        case "center":
+            box_offset_x = 0
+        case "right":
+            box_offset_x = cell.geometry.width
+
+    t = Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style)
+    t.geometry.x += box_offset_x
+    t.geometry.y += box_offset_y
+    content = render_text(t)
     # align
     # verticalAlign
     # r.elements = [content]
@@ -482,13 +494,13 @@ class SArrPoints:
 
 
 def calc_arrow_margin_point(arrow: ArrowAtNode, node: Cell, tnode: Cell, target_point: Point) -> Point:
-    #tnode = lut[arrow.target.node]
+    # tnode = lut[arrow.target.node]
     closestXFactor = -1.0
     closestYFactor = -1.0
     if arrow.X is None:
         # when source X/Y is None, "best fit" is desired
         assert arrow.Y is None, "otherwise, how is this arrow freestanding?"
-        #assert len(arrow.points) == 0, "how can the arrow be freestanding with pinned points"
+        # assert len(arrow.points) == 0, "how can the arrow be freestanding with pinned points"
         # FIXME? do i need the assert?
 
         if target_point.x > node.geometry.x + node.geometry.width:
@@ -553,7 +565,7 @@ def closest_point(a: Cell | Point, b: Point) -> Point:
     else:
         a_points = [a]
 
-    min_dist = float('inf')
+    min_dist = float("inf")
     closest = None
 
     for ap in a_points:
@@ -565,6 +577,7 @@ def closest_point(a: Cell | Point, b: Point) -> Point:
 
     assert closest is not None
     return closest
+
 
 # 3 types of handling:
 # - node to node, unconstrained
@@ -578,8 +591,8 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
     if isinstance(arrow.target, ArrowAtNode):
         target = lut[arrow.target.node]
         target_point = Point(
-                target.geometry.x + target.geometry.width * arrow.target.X,
-                target.geometry.y + target.geometry.height * arrow.target.Y
+            target.geometry.x + target.geometry.width * arrow.target.X,
+            target.geometry.y + target.geometry.height * arrow.target.Y,
         )
         print("constrained target", target_point)
     else:
@@ -592,8 +605,8 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         if arrow.source.X is not None:
             # Constrained source
             source_point = Point(
-                    source.geometry.x + source.geometry.width * arrow.source.X,
-                    source.geometry.y + source.geometry.height * arrow.source.Y
+                source.geometry.x + source.geometry.width * arrow.source.X,
+                source.geometry.y + source.geometry.height * arrow.source.Y,
             )
             print("constrained source", source_point)
         else:
@@ -607,7 +620,6 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
     else:
         source = arrow.source
         source_point = arrow.source
-
 
     # TODO: Not all points are fixed. We should still find best path
     # from source->arrow.points[0]) or arrow.points[-1]->target
@@ -650,11 +662,13 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         )
     ]
 
+
 class Side(enum.Enum):
     LEFT = enum.auto()
     RIGHT = enum.auto()
     TOP = enum.auto()
     BOTTOM = enum.auto()
+
 
 def get_closest_side(c: Cell, p: Point) -> Point:
     pws = c.center_points_with_sides()
@@ -671,22 +685,24 @@ def get_closest_side(c: Cell, p: Point) -> Point:
         mindist = p.distance_to(closest)
     return chosen_side
 
+
 def get_margin_point(c: Cell, p: Point) -> tuple[Point, Side]:
     # Closest side
     chosen_side = get_closest_side(c, p)
     mp: Point
     match chosen_side:
         case Side.LEFT:
-            mp = Point(p.x-20, p.y)
+            mp = Point(p.x - 20, p.y)
         case Side.RIGHT:
-            mp = Point(p.x+20, p.y)
+            mp = Point(p.x + 20, p.y)
         case Side.TOP:
-            mp = Point(p.x, p.y-20)
+            mp = Point(p.x, p.y - 20)
         case Side.BOTTOM:
-            mp = Point(p.x, p.y+20)
+            mp = Point(p.x, p.y + 20)
         case default:
             raise ValueError(f"Wrong side: {default}")
     return mp, chosen_side
+
 
 def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Point]:
     print(f"Pathing {sp} to {tp}")
@@ -717,9 +733,10 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
             points.append(Point(mps.x, mpt.y))
 
     points.append(mpt)
-    print('path points', points)
+    print("path points", points)
 
     return points
+
 
 # r = parse_mxfile(open("inputs/simple.drawio").read())
 r = parse_mxfile(open("inputs/two-boxes-arrow.drawio").read())
