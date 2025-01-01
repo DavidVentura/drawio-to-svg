@@ -3,8 +3,6 @@ import math
 
 import svg
 
-import pather
-
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -20,6 +18,61 @@ class Geometry:
     relative: Optional[int]
 
 
+class StrokeStyle(enum.Enum):
+    SOLID = enum.auto()
+    DOTTED_1 = enum.auto() # 1 1
+    DOTTED_2 = enum.auto() # 1 2
+    DOTTED_3 = enum.auto() # 1 4
+    DASHED_1 = enum.auto() # 2
+    DASHED_2 = enum.auto() # 8 8
+    DASHED_3 = enum.auto() # 12 12
+
+    @staticmethod
+    def from_dash_pattern(dp: str | None) -> "StrokeStyle":
+        match dp:
+            case "1 1":
+                return StrokeStyle.DOTTED_1
+            case "1 2":
+                return StrokeStyle.DOTTED_2
+            case "1 4":
+                return StrokeStyle.DOTTED_3
+            case None:
+                return StrokeStyle.DASHED_1
+            case "8 8":
+                return StrokeStyle.DASHED_2
+            case "12 12":
+                return StrokeStyle.DASHED_3
+        raise ValueError(f"Illegal dash pattern {dp}")
+
+    def as_props(self) -> dict[str, str]:
+        match self:
+            case StrokeStyle.SOLID:
+                da = "none"
+            case StrokeStyle.DOTTED_1:
+                da = "1 1"
+            case StrokeStyle.DOTTED_2:
+                da = "1 2"
+            case StrokeStyle.DOTTED_2:
+                da = "1 4"
+            case StrokeStyle.DASHED_1:
+                da = "3 3"
+            case StrokeStyle.DASHED_2:
+                da = "8 8"
+            case StrokeStyle.DASHED_3:
+                da = "12 12"
+            case _:
+                raise ValueError(f"Invalid enum variant {self}")
+
+        return {
+            "stroke_dasharray": da,
+        }
+
+@dataclass
+class Stroke:
+    style: StrokeStyle
+    width: int
+    color: str
+
 @dataclass
 class Cell:
     id: str
@@ -27,8 +80,8 @@ class Cell:
     vertex: bool
     parent: str
     geometry: Optional[Geometry]
-    strokeColor: str
     fillColor: str
+    stroke: Stroke
     # Do not use. only for debugging
     _style: dict[str, str]
 
@@ -308,6 +361,17 @@ def parse_mxfile(xml_string: str) -> MxFile:
                 c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, styles)
             else:
                 geometry = parse_geometry(cell.find("mxGeometry"))
+
+                if styles.get("dashed") is not None:
+                    ss = StrokeStyle.from_dash_pattern(styles.get("dashPattern"))
+                else:
+                    ss = StrokeStyle.SOLID
+
+                stroke = Stroke(
+                        style=ss,
+                        width=int(styles.get("strokeWidth", "1")),
+                        color=styles.get("strokeColor", "#000"),
+                )
                 c = Cell(
                     id=cell.get("id"),
                     value=cell.get("value"),
@@ -315,7 +379,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     parent=cell.get("parent", ""),
                     geometry=geometry,
                     _style=styles,
-                    strokeColor=styles.get("strokeColor", "#000"),
+                    stroke=stroke,
                     fillColor=styles.get("fillColor", "#fff"),
                 )
             cells.append(c)
@@ -370,12 +434,14 @@ def render_rect(cell: Cell) -> list:
         y=cell.geometry.y,
         width=cell.geometry.width,
         height=cell.geometry.height,
-        stroke=cell.strokeColor,
+        stroke=cell.stroke.color,
         fill=cell.fillColor,
+        **cell.stroke.style.as_props(),
     )
 
     dX = cell.geometry.width / 2
     tX = -50
+    # FIXME _style
     match cell._style.get("align"):
         case "left":
             dX = 0
@@ -657,13 +723,14 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
 
 # r = parse_mxfile(open("inputs/simple.drawio").read())
 r = parse_mxfile(open("inputs/two-boxes-arrow.drawio").read())
+r = parse_mxfile(open("disk.drawio").read())
 PAGE = 0
 root = r.diagrams[PAGE].model.root
 lut = {}
 for cell in root.cells:
     lut[cell.id] = cell
 
-doc = svg.SVG(elements=[], viewBox="-0.5 600.5 500 60")
+doc = svg.SVG(elements=[], viewBox="-0.5 400.5 500 60")
 assert doc.elements is not None
 doc.elements.append(
     svg.Defs(
