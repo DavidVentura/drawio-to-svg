@@ -1,5 +1,6 @@
 """
 Goals for now:
+    0. Label rendering outside of box, size is wrong
     1. Parent relationship/relative -- if a cell has parent, its coordinates are relative
     2. Non-HTML text decoration
     3. Non-boxes
@@ -151,7 +152,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
                 c = parse_arrow(cell)
             elif styles.get("text") is not None:
                 geometry = parse_geometry(cell.find("mxGeometry"))
-                c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, styles)
+                c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, "middle", "center", styles)
             else:
                 geometry = parse_geometry(cell.find("mxGeometry"))
 
@@ -207,6 +208,37 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
     # There's basic styling supported in the text element in drawio
     # but also, you can inject arbitrary HTML if you double-click
     # the text objects. WHY?
+    # FIXME: entities such as &nbsp; crash
+
+    """
+    <foreignObject width="100%" height="100%" requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility" style="overflow: visible; text-align: left;">
+      <div dir="ltr" style="display: flex; align-items: unsafe center; justify-content: unsafe flex-end; width: 242px; height: 1px; padding-top: 155px; margin-left: -209px;">
+        <div data-drawio-colors="color: rgb(0, 0, 0); " style="box-sizing: border-box; font-size: 0px; text-align: right;">
+          <div style="display: inline-block; white-space: normal; overflow-wrap: normal;">Disk 2</div>
+        </div>
+      </div>
+    </foreignObject>
+    """
+    match text.horizontalPosition:
+        case "left":
+            ml = "-100%"
+        case "center":
+            ml = "0px"
+        case "right":
+            ml = "100%"
+        case default:
+            raise ValueError(f"Wrong hp {default}")
+
+    match text.verticalPosition:
+        case "top":
+            mt = "-100%"
+        case "middle":
+            mt = "0px"
+        case "bottom":
+            mt = "100%"
+        case default:
+            raise ValueError(f"Wrong vp {default}")
+
     textContent = text.value.replace("<br>", "<br/>")
     t = svg.ForeignObject(
         x=text.geometry.x,
@@ -214,12 +246,14 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
         width=text.geometry.width,
         height=text.geometry.height,
         elements=[
-            HTMLDiv(
-                elements=[HTMLSpan(text=textContent, style="width: 100%")],
-                style=f"height: 100%; display: flex; flex-direction: row; align-items: {text.verticalAlign}",
-            )
+            #HTMLDiv(elements=[
+                HTMLDiv(
+                    style=f"display: flex; flex-direction: row; align-items: {text.verticalAlign}; width: 100%; height: 100%; transform:translate({ml}, {mt});",
+                    elements=[HTMLSpan(text=textContent, style="width: 100%")],
+                )
+                #])
         ],
-        style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily};",
+        style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
     )
     return (t, text.geometry)
 
@@ -250,7 +284,7 @@ def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
     # Box alignment
     match cell.verticalLabelPosition:
         case "top":
-            box_offset_y = -cell.geometry.height
+            mt = -cell.geometry.height
         case "middle":
             box_offset_y = 0
         case "bottom":
@@ -276,11 +310,12 @@ def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
     """
     # TODO: rotation?
     bb = Geometry.from_geom(cell.geometry)
-    t = Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style)
-    # print("1text geom", t.geometry)
-    t.geometry.x += box_offset_x
-    t.geometry.y += box_offset_y
-    # print("2text geom", t.geometry, box_offset_x, box_offset_y)
+    # FIXME geometry should be set here, at least a width, how?
+    t = Text.from_styles(
+        cell.id + "-text", cell.value, cell.geometry, cell.verticalLabelPosition, cell.labelPosition, cell._style
+    )
+    # t.geometry.x += box_offset_x
+    # t.geometry.y += box_offset_y
     bb = bb.stretch_to_contain(t.geometry)
     content, bb2 = render_text(t)
     bb = bb.stretch_to_contain(bb2)
@@ -543,6 +578,6 @@ if __name__ == "__main__":
     f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=2)
+    doc = render_file(r, page=3)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)

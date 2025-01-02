@@ -195,9 +195,14 @@ class Text:
     alignment: str
     fontFamily: str
     verticalAlign: str
+    verticalPosition: str
+    horizontalPosition: str
 
     @staticmethod
-    def from_styles(id_: str, text: str, geometry: Geometry, style: dict[str, str]) -> "Text":
+    def from_styles(id_: str, text: str, geometry: Geometry,
+                    verticalPosition: str,
+                    horizontalPosition: str,
+                    style: dict[str, str]) -> "Text":
         va_lut = {
             "middle": "center",
             "bottom": "end",
@@ -212,6 +217,8 @@ class Text:
             alignment=style.get("align", "center"),
             fontFamily=style.get("fontFamily", "Helvetica"),
             verticalAlign=va_lut[style.get("verticalAlign", "middle")],
+            verticalPosition=verticalPosition,
+            horizontalPosition=horizontalPosition,
         )
 
 
