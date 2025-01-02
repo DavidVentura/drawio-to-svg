@@ -6,6 +6,7 @@ import svg
 from dataclasses import dataclass
 from typing import Optional
 
+
 @dataclass
 class Geometry:
     x: float
@@ -14,30 +15,43 @@ class Geometry:
     height: float
     relative: Optional[int] = None
 
-    def stretch_to_contain(self, item: "Point | Geometry") -> None:
-        match item:
-            case Point(x, y):
-                self.width = max(self.width, x)
-                self.x = min(self.x, x)
-                self.height = max(self.height, y)
-                self.y = min(self.y, y)
-            case Geometry(x, y, w, h, _):
-                self.width = max(self.width, x+w)
-                self.x = min(self.x, x)
-                self.height = max(self.height, y+h)
-                # 100 height at 0px
-                # 100 height at 200px
-                # => 300 height
-                # BUT
-                # 250 height at 0px
-                # 60  height at 200px
-                # => 260 height
-                # BUT ONLY ON last level, not ever ylevel
-                # FIXME
-                self.y = min(self.y, y)
-            case default:
-                raise ValueError(f"Not supported {default}")
-        print(item, "\n self=", self)
+    @staticmethod
+    def from_geom(item: "Point | Geometry") -> "Geometry":
+        if isinstance(item, Point):
+            return Geometry(
+                x=item.x,
+                y=item.y,
+                width=0,
+                height=0,
+            )
+        else:
+            return Geometry(
+                x=item.x,
+                y=item.y,
+                width=item.width,
+                height=item.height,
+            )
+
+    def stretch_to_contain(self: "Geometry | None", item: "Point | Geometry") -> "Geometry":
+        if self is None:
+            return Geometry.from_geom(item)
+        if isinstance(item, Point):
+            min_x = min(self.x, item.x)
+            min_y = min(self.y, item.y)
+            max_x = max(self.x + self.width, item.x)
+            max_y = max(self.y + self.height, item.y)
+        else:
+            min_x = min(self.x, item.x)
+            min_y = min(self.y, item.y)
+            max_x = max(self.x + self.width, item.x + item.width)
+            max_y = max(self.y + self.height, item.y + item.height)
+
+        return Geometry(
+            width=max_x - min_x,
+            height=max_y - min_y,
+            x=min_x,
+            y=min_y,
+        )
 
 
 class StrokeStyle(enum.Enum):
@@ -110,6 +124,7 @@ class Shape(enum.Enum):
                 return Shape.Curly
             case unsupported:
                 raise NotImplementedError(f"Shape {unsupported}")
+
 
 @dataclass
 class Cell:
@@ -290,6 +305,7 @@ class Diagram:
 class MxFile:
     version: str
     diagrams: list[Diagram]
+
 
 @dataclass
 class ArrowPoints:

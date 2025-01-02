@@ -1,6 +1,6 @@
 """
 Goals for now:
-    1. Auto crop / viewBox working right
+    1. Parent relationship/relative -- if a cell has parent, its coordinates are relative
     2. Non-HTML text decoration
     3. Non-boxes
         3.0 split "Rect" from "Cell"
@@ -101,7 +101,7 @@ def parse_arrow(cell: ET.Element) -> Arrow:
         if exitX is not None:
             exitX = 1.0 - exitX
         # exitY is _NOT_ reversed??
-        #if exitY is not None:
+        # if exitY is not None:
         #    exitY = 1.0 - exitY
         source = ArrowAtNode(
             node=cell.get("source"),
@@ -180,7 +180,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     # top middle bottom
                     verticalLabelPosition=styles.get("verticalLabelPosition", "middle"),
                     shape=Shape.from_str(styles.get("shape", "rect")),
-                    direction=Direction.from_str(styles.get("direction", "south")),
+                    direction=Direction.from_str(styles.get("direction", "east")),
                 )
             cells.append(c)
 
@@ -225,7 +225,6 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
 
 
 def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
-
 
     match cell.shape:
         case Shape.Rect:
@@ -275,17 +274,16 @@ def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
       </div>
     </foreignObject>
     """
-    bb = Geometry(math.inf, math.inf, 0, 0)
     # TODO: rotation?
-    bb.stretch_to_contain(cell.geometry)
+    bb = Geometry.from_geom(cell.geometry)
     t = Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style)
-    #print("1text geom", t.geometry)
+    # print("1text geom", t.geometry)
     t.geometry.x += box_offset_x
     t.geometry.y += box_offset_y
-    #print("2text geom", t.geometry, box_offset_x, box_offset_y)
-    bb.stretch_to_contain(t.geometry)
+    # print("2text geom", t.geometry, box_offset_x, box_offset_y)
+    bb = bb.stretch_to_contain(t.geometry)
     content, bb2 = render_text(t)
-    bb.stretch_to_contain(bb2)
+    bb = bb.stretch_to_contain(bb2)
     return ([r, content], bb)
 
 
@@ -387,13 +385,12 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[list[svg.Element],
         last_p = (points[-1] - points[-2]).normalized()
         points[-1] = points[-1] - last_p
 
-    bb = Geometry(math.inf, math.inf, 0, 0)
     start = points[0]
     commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
-    bb.stretch_to_contain(start)
+    bb = Geometry.from_geom(start)
     for point in points[1:]:
         # TODO: this should include stroke-width
-        bb.stretch_to_contain(point)
+        bb = bb.stretch_to_contain(point)
         commands.append(svg.LineTo(point.x, point.y))
 
     path = svg.Path(
@@ -481,26 +478,27 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
         lut[cell.id] = cell
 
     elements = []
-    main_bb = Geometry(math.inf, math.inf, 0, 0, None)
+    main_bb = None
     # Rendering order depends on cell order
     for cell in root.cells:
         if cell.geometry is None:
             continue
         if isinstance(cell, Arrow):
             svge, bb = render_arrow(cell, lut)
-            print("arrowwwwwww")
-            main_bb.stretch_to_contain(bb)
+            main_bb = Geometry.stretch_to_contain(main_bb, bb)
             elements.extend(svge)
             continue
         elif isinstance(cell, Text):
             svge, bb = render_text(cell)
-            main_bb.stretch_to_contain(bb)
+            main_bb = Geometry.stretch_to_contain(main_bb, bb)
             elements.append(svge)
             continue
         # Assuming rect
         svge, bb = render_rect(cell)
-        main_bb.stretch_to_contain(bb)
+        main_bb = Geometry.stretch_to_contain(main_bb, bb)
         elements.extend(svge)
+
+    assert main_bb is not None
 
     classic_arrow_path = [
         svg.MoveTo(7, 7),
@@ -532,19 +530,19 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
     doc = svg.SVG(
         elements=elements,
         xmlns="http://www.w3.org/2000/svg",
-        width=main_bb.width+0.5,
-        height=main_bb.height+0.5,
-        viewBox=svg.ViewBoxSpec(main_bb.x-0.5, main_bb.y-0.5, main_bb.width+0.5, main_bb.height+0.5),
+        width=main_bb.width + 0.5,
+        height=main_bb.height + 0.5,
+        viewBox=svg.ViewBoxSpec(main_bb.x - 0.5, main_bb.y - 0.5, main_bb.width + 1.0, main_bb.height + 1.0),
     )
 
     return doc
 
 
 if __name__ == "__main__":
-    #f = Path("inputs/two-boxes-arrow.drawio")
+    # f = Path("inputs/two-boxes-arrow.drawio")
     f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=1)
+    doc = render_file(r, page=2)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
