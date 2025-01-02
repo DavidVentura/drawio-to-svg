@@ -1,7 +1,7 @@
 """
 Goals for now:
     1. Auto crop / viewBox working right
-    2. Text parsing (<b> ...)
+    2. Non-HTML text decoration
     3. Non-boxes (eg: curly bracket in disks)
         3.0 split "Rect" from "Cell"
         3.1 shape=curlyBracket
@@ -339,7 +339,6 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         # FIXME HACK
         points = [source_point] + points
 
-
     optargs = {}
 
     if arrow.start_style == "classic":
@@ -443,14 +442,27 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
     for cell in root.cells:
         lut[cell.id] = cell
 
-    doc = svg.SVG(elements=[], viewBox=svg.ViewBoxSpec(-0.5, 400.5, 500, 160))
-    assert doc.elements is not None
+    elements = []
+    # Rendering order depends on cell order
+    for cell in root.cells:
+        if cell.geometry is None:
+            continue
+        if isinstance(cell, Arrow):
+            elements.extend(render_arrow(cell, lut))
+            continue
+        elif isinstance(cell, Text):
+            elements.append(render_text(cell))
+            continue
+        # pprint.pprint(cell)
+        # Assuming rect
+        elements.extend(render_rect(cell))
+
     classic_arrow_path = [
-            svg.MoveTo(7, 7),
-            svg.LineTo(0, 10.5),
-            svg.LineTo(1.75, 7),
-            svg.LineTo(0, 3.5),
-            svg.Z(),
+        svg.MoveTo(7, 7),
+        svg.LineTo(0, 10.5),
+        svg.LineTo(1.75, 7),
+        svg.LineTo(0, 3.5),
+        svg.Z(),
     ]
     arrow = svg.Marker(
         id="arrow",
@@ -465,26 +477,15 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             # fill uses context-stroke intentionally
         ],
     )
-    doc.elements.append(
+    elements.append(
         svg.Defs(
             elements=[
                 arrow,
             ]
         )
     )
-    # Rendering order depends on cell order
-    for cell in root.cells:
-        if cell.geometry is None:
-            continue
-        if isinstance(cell, Arrow):
-            doc.elements.extend(render_arrow(cell, lut))
-            continue
-        elif isinstance(cell, Text):
-            doc.elements.append(render_text(cell))
-            continue
-        # pprint.pprint(cell)
-        # Assuming rect
-        doc.elements.extend(render_rect(cell))
+    doc = svg.SVG(elements=elements, viewBox=svg.ViewBoxSpec(-0.5, 400.5, 500, 160))
+
     return doc
 
 
