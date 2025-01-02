@@ -12,7 +12,22 @@ class Geometry:
     y: float
     width: float
     height: float
-    relative: Optional[int]
+    relative: Optional[int] = None
+
+    def stretch_to_contain(self, item: "Point | Geometry") -> None:
+        match item:
+            case Point(x, y):
+                self.width = max(self.width, x)
+                self.x = min(self.x, x)
+                self.height = max(self.height, y)
+                self.y = min(self.y, y)
+            case Geometry(x, y, w, h, _):
+                self.width = max(self.width, w)
+                self.x = min(self.x, x)
+                self.height = max(self.height, h)
+                self.y = min(self.y, y)
+            case default:
+                raise ValueError(f"Not supported {default}")
 
 
 class StrokeStyle(enum.Enum):

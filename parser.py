@@ -193,7 +193,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
     return MxFile(version=root.get("version"), diagrams=diagrams)
 
 
-def render_text(text: Text) -> svg.Element:
+def render_text(text: Text) -> tuple[svg.Element, Geometry]:
     # Text wrapping is not supported by `Text`
     # Need to use `foreignObject` with a <span> HTML element
     # Which is also used to align text vertically with `flex`
@@ -217,10 +217,10 @@ def render_text(text: Text) -> svg.Element:
         ],
         style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily};",
     )
-    return t
+    return (t, text.geometry)
 
 
-def render_rect(cell: Cell) -> list:
+def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
     r = svg.Rect(
         x=cell.geometry.x,
         y=cell.geometry.y,
@@ -249,11 +249,14 @@ def render_rect(cell: Cell) -> list:
         case "right":
             box_offset_x = cell.geometry.width
 
+    bb = Geometry(math.inf, math.inf, 0, 0)
+    bb.stretch_to_contain(cell.geometry)
     t = Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style)
     t.geometry.x += box_offset_x
     t.geometry.y += box_offset_y
+    bb.stretch_to_contain(t.geometry)
     content = render_text(t)
-    return [r, content]
+    return ([r, content], bb)
 
 
 def closest_point(a: Cell | Point, b: Point) -> Point:
@@ -282,7 +285,7 @@ def closest_point(a: Cell | Point, b: Point) -> Point:
 # - node (constrained) to node (un-constrained) -- also the reverse
 #   - can also be partially-constrained (few points, then unconstrained)
 # - arrow to node (implies constrained)
-def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
+def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[svg.Element, Geometry]:
 
     target: Cell | Point
     target_point: None | Point = None
@@ -353,19 +356,21 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         last_p = (points[-1] - points[-2]).normalized()
         points[-1] = points[-1] - last_p
 
+    bb = Geometry(math.inf, math.inf, 0, 0)
     start = points[0]
     commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
+    bb.stretch_to_contain(start)
     for point in points[1:]:
+        bb.stretch_to_contain(point)
         commands.append(svg.LineTo(point.x, point.y))
 
-    return [
-        svg.Path(
-            stroke=arrow.strokeColor,
-            d=commands,
-            fill="none",
-            **optargs,
-        )
-    ]
+    path = svg.Path(
+        stroke=arrow.strokeColor,
+        d=commands,
+        fill="none",
+        **optargs,
+    )
+    return (path, bb)
 
 
 def get_closest_side(c: Cell, p: Point) -> Point:
@@ -443,19 +448,27 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
         lut[cell.id] = cell
 
     elements = []
+    main_bb = Geometry(math.inf, math.inf, 0, 0, None)
     # Rendering order depends on cell order
     for cell in root.cells:
         if cell.geometry is None:
             continue
         if isinstance(cell, Arrow):
-            elements.extend(render_arrow(cell, lut))
+            svge, bb = render_arrow(cell, lut)
+            main_bb.stretch_to_contain(bb)
+            elements.append(svge)
             continue
         elif isinstance(cell, Text):
-            elements.append(render_text(cell))
+            svge, bb = render_text(cell)
+            main_bb.stretch_to_contain(bb)
+            elements.append(svge)
             continue
         # pprint.pprint(cell)
         # Assuming rect
-        elements.extend(render_rect(cell))
+        svge, bb = render_rect(cell)
+        main_bb.stretch_to_contain(bb)
+        print("bb", main_bb)
+        elements.extend(svge)
 
     classic_arrow_path = [
         svg.MoveTo(7, 7),
@@ -484,7 +497,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             ]
         )
     )
-    doc = svg.SVG(elements=elements, viewBox=svg.ViewBoxSpec(-0.5, 400.5, 500, 160))
+    doc = svg.SVG(
+        elements=elements,
+        viewBox=svg.ViewBoxSpec(main_bb.x-0.5, main_bb.y-0.5, main_bb.width+0.5, main_bb.height+0.5),
+    )
 
     return doc
 
