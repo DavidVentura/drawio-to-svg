@@ -1,3 +1,13 @@
+"""
+Goals for now:
+    1. Auto crop / viewBox working right
+    2. Text parsing (<b> ...)
+    3. Non-boxes (eg: curly bracket in disks)
+        3.0 split "Rect" from "Cell"
+        3.1 shape=curlyBracket
+    4. Path finding for arrows
+"""
+
 import math
 
 import svg
@@ -8,6 +18,7 @@ from typing import Optional
 from drawio_types import *
 
 import xml.etree.ElementTree as ET
+
 
 def opt_float(val: str | None) -> float | None:
     if val is None:
@@ -184,7 +195,15 @@ def parse_mxfile(xml_string: str) -> MxFile:
 
 def render_text(text: Text) -> svg.Element:
     # Text wrapping is not supported by `Text`
-    # Need to use `foreignObject` with a <p> HTML element
+    # Need to use `foreignObject` with a <span> HTML element
+    # Which is also used to align text vertically with `flex`
+
+    # FIXME DANGER this pipes HTML straight in
+    # - always need to close tags
+    # There's basic styling supported in the text element in drawio
+    # but also, you can inject arbitrary HTML if you double-click
+    # the text objects. WHY?
+    textContent = text.value.replace("<br>", "<br/>")
     t = svg.ForeignObject(
         x=text.geometry.x,
         y=text.geometry.y,
@@ -192,7 +211,7 @@ def render_text(text: Text) -> svg.Element:
         height=text.geometry.height,
         elements=[
             HTMLDiv(
-                elements=[HTMLSpan(text=text.value.replace("<", ""), style="width: 100%")],
+                elements=[HTMLSpan(text=textContent, style="width: 100%")],
                 style=f"height: 100%; display: flex; flex-direction: row; align-items: {text.verticalAlign}",
             )
         ],
@@ -302,13 +321,12 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
 
     # TODO: Not all points are fixed. We should still find best path
     # from source->arrow.points[0]) or arrow.points[-1]->target
-    if len(arrow.points) == 0:
-        assert isinstance(source, Cell)
+    if len(arrow.points) == 0 and isinstance(source, Cell):
         assert isinstance(target, Cell)
         # An arrow with no manual points gets auto-path
         points = find_best_path(source_point, target_point, source, target)
     else:
-        # Manual points, set by the user
+        # (maybe) manual points, set by the user
         points = arrow.points
 
     if target_point not in points:
@@ -321,16 +339,25 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> list:
         # FIXME HACK
         points = [source_point] + points
 
-    start = points[0]
-    commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
-    for point in points[1:]:
-        commands.append(svg.LineTo(point.x, point.y))
+
     optargs = {}
 
     if arrow.start_style == "classic":
         optargs["marker_start"] = "url(#arrow)"
+        # If we have start-cap, the line should not start at the source, but 1 unit before
+        first_p = (points[1] - points[0]).normalized()
+        points[0] = points[0] + first_p
+
     if arrow.end_style == "classic":
         optargs["marker_end"] = "url(#arrow)"
+        # If we have end-cap, the line should not finish in the target, but 1 unit before
+        last_p = (points[-1] - points[-2]).normalized()
+        points[-1] = points[-1] - last_p
+
+    start = points[0]
+    commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
+    for point in points[1:]:
+        commands.append(svg.LineTo(point.x, point.y))
 
     return [
         svg.Path(
@@ -410,34 +437,38 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
     return points
 
 
-def render_file(f: Path) -> svg.SVG:
-    # r = parse_mxfile(open("inputs/simple.drawio").read())
-    with f.open() as fd:
-        r = parse_mxfile(fd.read())
-    PAGE = 0
-    root = r.diagrams[PAGE].model.root
+def render_file(r: MxFile, page=0) -> svg.SVG:
+    root = r.diagrams[page].model.root
     lut = {}
     for cell in root.cells:
         lut[cell.id] = cell
 
-    doc = svg.SVG(elements=[], viewBox="-0.5 600.5 500 60")
+    doc = svg.SVG(elements=[], viewBox=svg.ViewBoxSpec(-0.5, 400.5, 500, 160))
     assert doc.elements is not None
+    classic_arrow_path = [
+            svg.MoveTo(7, 7),
+            svg.LineTo(0, 10.5),
+            svg.LineTo(1.75, 7),
+            svg.LineTo(0, 3.5),
+            svg.Z(),
+    ]
+    arrow = svg.Marker(
+        id="arrow",
+        viewBox=svg.ViewBoxSpec(0, 0, 10, 15),
+        refX=6.5,
+        refY=7,
+        markerWidth=10,
+        markerHeight=10,
+        orient="auto-start-reverse",
+        elements=[
+            svg.Path(d=classic_arrow_path, stroke="context-stroke", fill="context-stroke"),
+            # fill uses context-stroke intentionally
+        ],
+    )
     doc.elements.append(
         svg.Defs(
             elements=[
-                svg.Marker(
-                    id="arrow",
-                    viewBox="0 0 10 10",
-                    refX="5",
-                    refY="5",
-                    markerWidth="6",
-                    markerHeight="6",
-                    orient="auto",
-                    elements=[
-                        svg.Path(d="M 0 0 L 5 5 L 0 10 z", stroke="context-stroke", fill="context-stroke"),
-                        # fill uses context-stroke intentionally
-                    ],
-                ),
+                arrow,
             ]
         )
     )
@@ -456,8 +487,12 @@ def render_file(f: Path) -> svg.SVG:
         doc.elements.extend(render_rect(cell))
     return doc
 
+
 if __name__ == "__main__":
-    doc = render_file(Path("inputs/two-boxes-arrow.drawio"))
-    #doc = render_file(Path("disk.drawio"))
+    f = Path("disk.drawio")
+    f = Path("inputs/two-boxes-arrow.drawio")
+    with f.open() as fd:
+        r = parse_mxfile(fd.read())
+    doc = render_file(r, page=0)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
