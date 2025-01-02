@@ -2,15 +2,16 @@
 Goals for now:
     1. Auto crop / viewBox working right
     2. Non-HTML text decoration
-    3. Non-boxes (eg: curly bracket in disks)
+    3. Non-boxes
         3.0 split "Rect" from "Cell"
-        3.1 shape=curlyBracket
     4. Path finding for arrows
 """
 
 import math
 
 import svg
+
+import shapes
 
 from pathlib import Path
 from typing import Optional
@@ -99,8 +100,9 @@ def parse_arrow(cell: ET.Element) -> Arrow:
         exitY = opt_float(styles.get("exitY"))
         if exitX is not None:
             exitX = 1.0 - exitX
-        if exitY is not None:
-            exitY = 1.0 - exitY
+        # exitY is _NOT_ reversed??
+        #if exitY is not None:
+        #    exitY = 1.0 - exitY
         source = ArrowAtNode(
             node=cell.get("source"),
             X=exitX,
@@ -177,6 +179,8 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     labelPosition=styles.get("labelPosition", "center"),
                     # top middle bottom
                     verticalLabelPosition=styles.get("verticalLabelPosition", "middle"),
+                    shape=Shape.from_str(styles.get("shape", "rect")),
+                    direction=Direction.from_str(styles.get("direction", "south")),
                 )
             cells.append(c)
 
@@ -221,16 +225,28 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
 
 
 def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
-    r = svg.Rect(
-        x=cell.geometry.x,
-        y=cell.geometry.y,
-        width=cell.geometry.width,
-        height=cell.geometry.height,
-        stroke=cell.stroke.color,
-        fill=cell.fillColor,
-        opacity=cell.opacity,
-        **cell.stroke.style.as_props(),
-    )
+
+
+    match cell.shape:
+        case Shape.Rect:
+            r = svg.Rect(
+                x=cell.geometry.x,
+                y=cell.geometry.y,
+                width=cell.geometry.width,
+                height=cell.geometry.height,
+                stroke=cell.stroke.color,
+                fill=cell.fillColor,
+                opacity=cell.opacity,
+                **cell.stroke.style.as_props(),
+            )
+        case Shape.Curly:
+            # When rotating, the dimensions change!
+            if cell.direction in [Direction.NORTH, Direction.SOUTH]:
+                w = cell.geometry.width
+                cell.geometry.width = cell.geometry.height
+                cell.geometry.height = w
+                pass
+            r = shapes.curly(cell.geometry, direction=cell.direction)
 
     # Box alignment
     match cell.verticalLabelPosition:
@@ -249,13 +265,27 @@ def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
         case "right":
             box_offset_x = cell.geometry.width
 
+    # This is wrong -- by making a huge bounding box, the resulting viewBox is too large
+    """
+    <foreignObject pointer-events="none" width="100%" height="100%" requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility" style="overflow: visible; text-align: left;">
+      <div xmlns="http://www.w3.org/1999/xhtml" dir="ltr" style="display: flex; align-items: unsafe center; justify-content: unsafe flex-end; width: 242px; height: 1px; padding-top: 155px; margin-left: -209px;">
+        <div data-drawio-colors="color: rgb(0, 0, 0); " style="box-sizing: border-box; font-size: 0px; text-align: right;">
+          <div style="display: inline-block; font-size: 12px; font-family: Helvetica; color: rgb(0, 0, 0); line-height: 1.2; pointer-events: all; white-space: normal; overflow-wrap: normal;">Disk 2</div>
+        </div>
+      </div>
+    </foreignObject>
+    """
     bb = Geometry(math.inf, math.inf, 0, 0)
+    # TODO: rotation?
     bb.stretch_to_contain(cell.geometry)
     t = Text.from_styles(cell.id + "-text", cell.value, cell.geometry, cell._style)
+    #print("1text geom", t.geometry)
     t.geometry.x += box_offset_x
     t.geometry.y += box_offset_y
+    #print("2text geom", t.geometry, box_offset_x, box_offset_y)
     bb.stretch_to_contain(t.geometry)
-    content = render_text(t)
+    content, bb2 = render_text(t)
+    bb.stretch_to_contain(bb2)
     return ([r, content], bb)
 
 
@@ -285,7 +315,7 @@ def closest_point(a: Cell | Point, b: Point) -> Point:
 # - node (constrained) to node (un-constrained) -- also the reverse
 #   - can also be partially-constrained (few points, then unconstrained)
 # - arrow to node (implies constrained)
-def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[svg.Element, Geometry]:
+def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[list[svg.Element], Geometry]:
 
     target: Cell | Point
     target_point: None | Point = None
@@ -327,6 +357,7 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[svg.Element, Geome
     if len(arrow.points) == 0 and isinstance(source, Cell):
         assert isinstance(target, Cell)
         # An arrow with no manual points gets auto-path
+        print("finding for s", source_point, source)
         points = find_best_path(source_point, target_point, source, target)
     else:
         # (maybe) manual points, set by the user
@@ -361,6 +392,7 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[svg.Element, Geome
     commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
     bb.stretch_to_contain(start)
     for point in points[1:]:
+        # TODO: this should include stroke-width
         bb.stretch_to_contain(point)
         commands.append(svg.LineTo(point.x, point.y))
 
@@ -370,7 +402,7 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[svg.Element, Geome
         fill="none",
         **optargs,
     )
-    return (path, bb)
+    return ([path], bb)
 
 
 def get_closest_side(c: Cell, p: Point) -> Point:
@@ -413,6 +445,7 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
     mpt, st = get_margin_point(target, tp)
     points = [mps]
 
+    print(ss, st)
     if {ss, st} == {Side.TOP, Side.BOTTOM}:
         # simple "N" shape
         ymid = mps.midpoint(mpt).y
@@ -455,19 +488,18 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             continue
         if isinstance(cell, Arrow):
             svge, bb = render_arrow(cell, lut)
+            print("arrowwwwwww")
             main_bb.stretch_to_contain(bb)
-            elements.append(svge)
+            elements.extend(svge)
             continue
         elif isinstance(cell, Text):
             svge, bb = render_text(cell)
             main_bb.stretch_to_contain(bb)
             elements.append(svge)
             continue
-        # pprint.pprint(cell)
         # Assuming rect
         svge, bb = render_rect(cell)
         main_bb.stretch_to_contain(bb)
-        print("bb", main_bb)
         elements.extend(svge)
 
     classic_arrow_path = [
@@ -499,6 +531,9 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
     )
     doc = svg.SVG(
         elements=elements,
+        xmlns="http://www.w3.org/2000/svg",
+        width=main_bb.width+0.5,
+        height=main_bb.height+0.5,
         viewBox=svg.ViewBoxSpec(main_bb.x-0.5, main_bb.y-0.5, main_bb.width+0.5, main_bb.height+0.5),
     )
 
@@ -506,10 +541,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 
 if __name__ == "__main__":
+    #f = Path("inputs/two-boxes-arrow.drawio")
     f = Path("disk.drawio")
-    f = Path("inputs/two-boxes-arrow.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=0)
+    doc = render_file(r, page=1)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)

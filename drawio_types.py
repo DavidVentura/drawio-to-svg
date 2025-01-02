@@ -22,12 +22,22 @@ class Geometry:
                 self.height = max(self.height, y)
                 self.y = min(self.y, y)
             case Geometry(x, y, w, h, _):
-                self.width = max(self.width, w)
+                self.width = max(self.width, x+w)
                 self.x = min(self.x, x)
-                self.height = max(self.height, h)
+                self.height = max(self.height, y+h)
+                # 100 height at 0px
+                # 100 height at 200px
+                # => 300 height
+                # BUT
+                # 250 height at 0px
+                # 60  height at 200px
+                # => 260 height
+                # BUT ONLY ON last level, not ever ylevel
+                # FIXME
                 self.y = min(self.y, y)
             case default:
                 raise ValueError(f"Not supported {default}")
+        print(item, "\n self=", self)
 
 
 class StrokeStyle(enum.Enum):
@@ -64,7 +74,7 @@ class StrokeStyle(enum.Enum):
                 da = "1 1"
             case StrokeStyle.DOTTED_2:
                 da = "1 2"
-            case StrokeStyle.DOTTED_2:
+            case StrokeStyle.DOTTED_3:
                 da = "1 4"
             case StrokeStyle.DASHED_1:
                 da = "3 3"
@@ -87,6 +97,20 @@ class Stroke:
     color: str
 
 
+class Shape(enum.Enum):
+    Rect = enum.auto()
+    Curly = enum.auto()
+
+    @staticmethod
+    def from_str(s: str) -> "Shape":
+        match s:
+            case "rect":
+                return Shape.Rect
+            case "curlyBracket":
+                return Shape.Curly
+            case unsupported:
+                raise NotImplementedError(f"Shape {unsupported}")
+
 @dataclass
 class Cell:
     id: str
@@ -101,6 +125,8 @@ class Cell:
     # regardless of the alignment within the label itself
     labelPosition: str
     verticalLabelPosition: str
+    shape: Shape
+    direction: "Direction"
 
     # Do not use. only for debugging
     _style: dict[str, str]
@@ -289,3 +315,25 @@ class Side(enum.Enum):
     RIGHT = enum.auto()
     TOP = enum.auto()
     BOTTOM = enum.auto()
+
+
+class Direction(enum.Enum):
+    WEST = enum.auto()
+    EAST = enum.auto()
+    SOUTH = enum.auto()
+    NORTH = enum.auto()
+
+    @staticmethod
+    def from_str(s: str) -> "Direction":
+        return Direction[s.upper()]
+
+    def rotation_angle(self) -> float:
+        match self:
+            case Direction.SOUTH:
+                return 270
+            case Direction.NORTH:
+                return 90
+            case Direction.WEST:
+                return 180
+            case Direction.EAST:
+                return 0
