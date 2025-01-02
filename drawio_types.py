@@ -182,8 +182,26 @@ class Point:
     def distance_to(self, other: "Point") -> float:
         return math.sqrt((other.x - self.x) ** 2 + (other.y - self.y) ** 2)
 
+    def __add__(self, other: "Point") -> "Point":
+        return Point(self.x + other.x, self.y + other.y)
+
     def __sub__(self, other: "Point") -> "Point":
         return Point(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, other: float) -> "Point":
+        return Point(self.x * other, self.y * other)
+
+    def normalized(self) -> "Point":
+        if self.x == 0:
+            x = 0
+        else:
+            x = self.x / abs(self.x)
+        if self.y == 0:
+            y = 0
+        else:
+            y = self.y / abs(self.y)
+
+        return Point(x, y)
 
     def midpoint(self, other: "Point") -> "Point":
         minx = min([self.x, other.x])
