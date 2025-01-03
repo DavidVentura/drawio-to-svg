@@ -86,7 +86,7 @@ def parse_arrow_points(geom: ET.Element) -> ArrowPoints:
     return ArrowPoints(sp, tp, extra)
 
 
-def parse_arrow(cell: ET.Element) -> Arrow:
+def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
     geom_xml = cell.find("mxGeometry")
     assert geom_xml is not None
     geometry = parse_geometry(geom_xml)
@@ -105,7 +105,7 @@ def parse_arrow(cell: ET.Element) -> Arrow:
         # if exitY is not None:
         #    exitY = 1.0 - exitY
         source = ArrowAtNode(
-            node=cell.get("source"),
+            node=lut[cell.get("source")],
             X=exitX,
             Y=exitY,
         )
@@ -114,7 +114,7 @@ def parse_arrow(cell: ET.Element) -> Arrow:
 
     if cell.get("target"):
         target = ArrowAtNode(
-            node=cell.get("target"),
+            node=lut[cell.get("target")],
             X=opt_float(styles.get("entryX")),
             Y=opt_float(styles.get("entryY")),
         )
@@ -140,22 +140,35 @@ def parse_arrow(cell: ET.Element) -> Arrow:
 def parse_mxfile(xml_string: str) -> MxFile:
     root = ET.fromstring(xml_string)
 
+    lut: dict[str, Cell] = {}
     diagrams = []
     for diagram in root.findall("diagram"):
         model_elem = diagram.find(".//mxGraphModel")
         assert model_elem is not None
 
         cells = []
-        for cell in model_elem.findall(".//mxCell"):
+        _cells_with_idx = list(enumerate(model_elem.findall(".//mxCell")))
+        # Arrows have `source` and `target` which may be unpopulated
+        # if we are going in rendering order, so we put the arrows last
+        # generate the LUT with full nodes
+        # then we sort them back based on the original index
+        _cells = sorted(_cells_with_idx, key=lambda t: t[1].get("edge") == "1")
+        for og_idx, cell in _cells:
             styles = parse_styles(cell.get("style"))
+            parent_node = lut.get(cell.get("parent"))
+            _g = cell.find("mxGeometry")
+            geometry = None
+            if _g is not None:
+                pg = None
+                if parent_node.geometry:
+                    pg = parent_node.geometry
+                geometry = parse_geometry(_g, pg)
+
             if cell.get("edge") == "1":
-                c = parse_arrow(cell)
+                c = parse_arrow(cell, lut)
             elif styles.get("text") is not None:
-                geometry = parse_geometry(cell.find("mxGeometry"))
                 c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, "middle", "center", styles)
             else:
-                geometry = parse_geometry(cell.find("mxGeometry"))
-
                 if styles.get("dashed") is not None:
                     ss = StrokeStyle.from_dash_pattern(styles.get("dashPattern"))
                 else:
@@ -170,7 +183,6 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     id=cell.get("id"),
                     value=cell.get("value"),
                     vertex=cell.get("vertex") == "1",
-                    parent=cell.get("parent", ""),
                     geometry=geometry,
                     _style=styles,
                     stroke=stroke,
@@ -182,15 +194,20 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     verticalLabelPosition=styles.get("verticalLabelPosition", "middle"),
                     shape=Shape.from_str(styles.get("shape", "rect")),
                     direction=Direction.from_str(styles.get("direction", "east")),
+                    parent_node=parent_node,
                 )
-            cells.append(c)
+            lut[c.id] = c
+            cells.append((og_idx, c))
+
+        # Re-sort cells based on their original index
+        resorted_cells = [c for _, c in sorted(cells)]
 
         model = Model(
             dx=float(model_elem.get("dx", 0)),
             dy=float(model_elem.get("dy", 0)),
             grid=int(model_elem.get("grid", 0)),
             grid_size=int(model_elem.get("gridSize", 0)),
-            root=Root(cells=cells),
+            root=Root(cells=resorted_cells),
         )
 
         diagrams.append(Diagram(name=diagram.get("name"), id=diagram.get("id"), model=model))
@@ -319,12 +336,12 @@ def closest_point(a: Cell | Point, b: Point) -> Point:
 # - node (constrained) to node (un-constrained) -- also the reverse
 #   - can also be partially-constrained (few points, then unconstrained)
 # - arrow to node (implies constrained)
-def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[list[svg.Element], Geometry]:
+def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
 
     target: Cell | Point
     target_point: None | Point = None
     if isinstance(arrow.target, ArrowAtNode):
-        target = lut[arrow.target.node]
+        target = arrow.target.node
         target_point = Point(
             target.geometry.x + target.geometry.width * arrow.target.X,
             target.geometry.y + target.geometry.height * arrow.target.Y,
@@ -336,7 +353,7 @@ def render_arrow(arrow: Arrow, lut: dict[str, Cell]) -> tuple[list[svg.Element],
 
     source: Cell | Point
     if isinstance(arrow.source, ArrowAtNode):
-        source = lut[arrow.source.node]
+        source = arrow.source.node
         if arrow.source.X is not None:
             # Constrained source
             source_point = Point(
@@ -479,9 +496,6 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
 
 def render_file(r: MxFile, page=0) -> svg.SVG:
     root = r.diagrams[page].model.root
-    lut = {}
-    for cell in root.cells:
-        lut[cell.id] = cell
 
     elements = []
     main_bb = None
@@ -490,7 +504,7 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
         if cell.geometry is None:
             continue
         if isinstance(cell, Arrow):
-            svge, bb = render_arrow(cell, lut)
+            svge, bb = render_arrow(cell)
             main_bb = Geometry.stretch_to_contain(main_bb, bb)
             elements.extend(svge)
             continue
