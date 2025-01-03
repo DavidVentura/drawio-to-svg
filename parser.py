@@ -1,11 +1,10 @@
 """
 Goals for now:
     0. Label rendering outside of box, size is wrong
-    1. Parent relationship/relative -- if a cell has parent, its coordinates are relative
-    2. Non-HTML text decoration
-    3. Non-boxes
-        3.0 split "Rect" from "Cell"
-    4. Path finding for arrows
+    1. Non-HTML text decoration
+    2. Non-boxes
+        2.0 split "Rect" from "Cell"
+    3. Path finding for arrows
 """
 
 import math
@@ -144,7 +143,7 @@ def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
 def parse_mxfile(xml_string: str) -> MxFile:
     root = ET.fromstring(xml_string)
 
-    lut: dict[str, Cell] = {}
+    lut: dict[str, Arrow | Text | Cell] = {}
     diagrams = []
     for diagram in root.findall("diagram"):
         model_elem = diagram.find(".//mxGraphModel")
@@ -199,6 +198,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     shape=Shape.from_str(styles.get("shape", "rect")),
                     direction=Direction.from_str(styles.get("direction", "east")),
                     parent_node=parent_node,
+                    is_group=styles.get("group") != None,
                 )
             lut[c.id] = c
             cells.append((og_idx, c))
@@ -258,7 +258,7 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
         case default:
             raise ValueError(f"Wrong vp {default}")
 
-    textContent = text.value.replace("<br>", "<br/>")
+    textContent = text.value.replace("<br>", "<br/>").replace("&nbsp;", " ")
     t = svg.ForeignObject(
         x=text.geometry.x,
         y=text.geometry.y,
@@ -287,6 +287,7 @@ def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
                 width=cell.geometry.width,
                 height=cell.geometry.height,
                 stroke=cell.stroke.color,
+                stroke_width=cell.stroke.width,
                 fill=cell.fillColor,
                 opacity=cell.opacity,
                 **cell.stroke.style.as_props(),
@@ -517,6 +518,8 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             main_bb = Geometry.stretch_to_contain(main_bb, bb)
             elements.append(svge)
             continue
+        if cell.is_group:
+            continue
         # Assuming rect
         svge, bb = render_rect(cell)
         main_bb = Geometry.stretch_to_contain(main_bb, bb)
@@ -563,10 +566,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 
 if __name__ == "__main__":
-    # f = Path("inputs/two-boxes-arrow.drawio")
-    f = Path("disk.drawio")
+    f = Path("inputs/two-boxes-arrow.drawio")
+    # f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=3)
+    doc = render_file(r, page=1)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
