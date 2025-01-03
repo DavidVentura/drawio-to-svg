@@ -99,18 +99,10 @@ def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
     end_style = styles.get("endArrow", "classic")
 
     if cell.get("source"):
-        # exitX/exitY are.. sometimes reversed??
-        exitX = opt_float(styles.get("exitX"))
-        exitY = opt_float(styles.get("exitY"))
-        #if exitX is not None:
-        #    exitX = 1.0 - exitX
-        # exitY is _NOT_ reversed??
-        # if exitY is not None:
-        #    exitY = 1.0 - exitY
         source = ArrowAtNode(
             node=lut[cell.get("source")],
-            X=exitX,
-            Y=exitY,
+            X=opt_float(styles.get("exitX")),
+            Y=opt_float(styles.get("exitY")),
         )
     else:
         source = arrow_points.source
@@ -347,23 +339,27 @@ def point_from_rotated_cell(c: Cell, arrow: ArrowAtNode) -> Point:
     assert arrow.X is not None
     assert arrow.Y is not None
 
+    match c.direction:
+        case Direction.EAST:
+            x_factor = arrow.X
+            y_factor = arrow.Y
+        case Direction.SOUTH:
+            # Flip axes
+            x_factor = arrow.Y
+            y_factor = arrow.X
+        case Direction.WEST:
+            # Flip X
+            x_factor = 1 - arrow.X
+            y_factor = arrow.Y
+        case Direction.NORTH:
+            # Flip axes AND y-factor
+            x_factor = arrow.Y
+            y_factor = 1-arrow.X
 
-    # 2x || 1, so when substracting X i get back either `2x-x=x` or `1-x`
-    x_factor = 1 if c.direction == Direction.WEST else 2*arrow.X
-    y_factor = 1 if c.direction == Direction.SOUTH else 2*arrow.Y
-    print(c.direction, x_factor, y_factor, arrow.X, arrow.Y)
-
-    if c.direction in [Direction.NORTH, Direction.SOUTH]:
-        print("Should flip")
-        point = Point(
-            c.geometry.x + c.geometry.width * (y_factor - arrow.Y),
-            c.geometry.y + c.geometry.height * (x_factor - arrow.X),
-        )
-    else:
-        point = Point(
-            c.geometry.x + c.geometry.width * (x_factor - arrow.X),
-            c.geometry.y + c.geometry.height * (y_factor - arrow.Y),
-        )
+    point = Point(
+        c.geometry.x + c.geometry.width * x_factor,
+        c.geometry.y + c.geometry.height * y_factor,
+    )
     return point
 
 # 3 types of handling:
