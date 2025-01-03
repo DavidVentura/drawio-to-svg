@@ -34,12 +34,16 @@ def opt_int(val: str | None) -> int | None:
     return int(val)
 
 
-def parse_geometry(geom_elem) -> Optional[Geometry]:
-    if geom_elem is None:
-        return None
+def parse_geometry(geom_elem: ET.Element, parent_geom: Optional[Geometry]) -> Geometry:
+    assert geom_elem is not None
+    px = 0
+    py = 0
+    if parent_geom is not None:
+        px = parent_geom.x
+        py = parent_geom.y
     return Geometry(
-        x=float(geom_elem.get("x", 0.0)),
-        y=float(geom_elem.get("y", 0.0)),
+        x=float(geom_elem.get("x", 0.0)) + px,
+        y=float(geom_elem.get("y", 0.0)) + py,
         width=opt_float(geom_elem.get("width")),
         height=opt_float(geom_elem.get("height")),
         relative=opt_int(geom_elem.get("relative")),
@@ -89,7 +93,7 @@ def parse_arrow_points(geom: ET.Element) -> ArrowPoints:
 def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
     geom_xml = cell.find("mxGeometry")
     assert geom_xml is not None
-    geometry = parse_geometry(geom_xml)
+    geometry = parse_geometry(geom_xml, None)
     arrow_points = parse_arrow_points(geom_xml)
     styles = parse_styles(cell.get("style"))
     start_style = styles.get("startArrow", "none")
@@ -273,7 +277,7 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
     return (t, text.geometry)
 
 
-def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
+def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
 
     match cell.shape:
         case Shape.Rect:
