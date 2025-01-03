@@ -99,11 +99,11 @@ def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
     end_style = styles.get("endArrow", "classic")
 
     if cell.get("source"):
-        # exitX/exitY are reversed??
+        # exitX/exitY are.. sometimes reversed??
         exitX = opt_float(styles.get("exitX"))
         exitY = opt_float(styles.get("exitY"))
-        if exitX is not None:
-            exitX = 1.0 - exitX
+        #if exitX is not None:
+        #    exitX = 1.0 - exitX
         # exitY is _NOT_ reversed??
         # if exitY is not None:
         #    exitY = 1.0 - exitY
@@ -189,7 +189,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     geometry=geometry,
                     _style=styles,
                     stroke=stroke,
-                    fillColor=styles.get("fillColor", "#fff"),
+                    fillColor=styles.get("fillColor", "#fff"), # TODO "default" value
                     opacity=float(styles.get("opacity", "100")) / 100.0,
                     # left center right
                     labelPosition=styles.get("labelPosition", "center"),
@@ -315,26 +315,56 @@ def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
     return ([r, content], bb)
 
 
-def closest_point(a: Cell | Point, b: Point) -> Point:
+def closest_point(a: Cell | Point, b: Cell | Point) -> Point:
     if isinstance(a, Cell):
         assert a.geometry is not None
         a_points = a.center_points()
     else:
         a_points = [a]
 
+    if isinstance(b, Cell):
+        assert b.geometry is not None
+        b_points = b.center_points()
+    else:
+        b_points = [b]
+
     min_dist = float("inf")
     closest = None
 
     for ap in a_points:
-        bp = b
-        dist = ((ap.x - bp.x) ** 2 + (ap.y - bp.y) ** 2) ** 0.5
-        if dist < min_dist:
-            min_dist = dist
-            closest = ap
+        for bp in b_points:
+            dist = ((ap.x - bp.x) ** 2 + (ap.y - bp.y) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                closest = ap
 
     assert closest is not None
     return closest
 
+
+def point_from_rotated_cell(c: Cell, arrow: ArrowAtNode) -> Point:
+    assert c.geometry is not None
+    assert arrow.X is not None
+    assert arrow.Y is not None
+
+
+    # 2x || 1, so when substracting X i get back either `2x-x=x` or `1-x`
+    x_factor = 1 if c.direction == Direction.WEST else 2*arrow.X
+    y_factor = 1 if c.direction == Direction.SOUTH else 2*arrow.Y
+    print(c.direction, x_factor, y_factor, arrow.X, arrow.Y)
+
+    if c.direction in [Direction.NORTH, Direction.SOUTH]:
+        print("Should flip")
+        point = Point(
+            c.geometry.x + c.geometry.width * (y_factor - arrow.Y),
+            c.geometry.y + c.geometry.height * (x_factor - arrow.X),
+        )
+    else:
+        point = Point(
+            c.geometry.x + c.geometry.width * (x_factor - arrow.X),
+            c.geometry.y + c.geometry.height * (y_factor - arrow.Y),
+        )
+    return point
 
 # 3 types of handling:
 # - node to node, unconstrained
@@ -342,16 +372,17 @@ def closest_point(a: Cell | Point, b: Point) -> Point:
 #   - can also be partially-constrained (few points, then unconstrained)
 # - arrow to node (implies constrained)
 def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
+    # TODO: source/dest X/Y are affected by node orientation
 
-    target: Cell | Point
+    target: Cell | Point = None
     target_point: None | Point = None
     if isinstance(arrow.target, ArrowAtNode):
         target = arrow.target.node
-        target_point = Point(
-            target.geometry.x + target.geometry.width * arrow.target.X,
-            target.geometry.y + target.geometry.height * arrow.target.Y,
-        )
-        print("constrained target", target_point)
+        if arrow.target.X is not None:
+            # Constrained target
+            assert isinstance(target, Cell)
+            target_point = point_from_rotated_cell(target, arrow.target)
+            print("constrained target", target_point)
     else:
         target = arrow.target
         target_point = arrow.target
@@ -361,29 +392,39 @@ def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
         source = arrow.source.node
         if arrow.source.X is not None:
             # Constrained source
-            source_point = Point(
-                source.geometry.x + source.geometry.width * arrow.source.X,
-                source.geometry.y + source.geometry.height * arrow.source.Y,
-            )
+            source_point = point_from_rotated_cell(source, arrow.source)
             print("constrained source", source_point)
-        else:
-            # Unconstrained source
-            # TODO: should use the target-margin-point
-            # for calculating the source side more accurately
-            # TODO(2): When source is un-constrained
-            # If target is LEFT/RIGHT, prefer TOP/BOT side (closest)
-            source_point = closest_point(source, target_point)
-            print("Auto calc source is", source_point)
     else:
         source = arrow.source
         source_point = arrow.source
+
+    # Unconstrained source
+    if isinstance(arrow.source, ArrowAtNode) and arrow.source.X is None:
+        # TODO: should use the target-margin-point
+        # for calculating the source side more accurately
+        # TODO(2): When source is un-constrained
+        # If target is LEFT/RIGHT, prefer TOP/BOT side (closest)
+        # If we picked a point already, use it, otherwise pick closest side
+        source_point = closest_point(source, target_point or target)
+        print("Auto calc source is", source_point)
+
+    # Unconstrained target
+    if isinstance(arrow.target, ArrowAtNode) and arrow.target.X is None:
+        # TODO: should use the target-margin-point
+        # for calculating the source side more accurately
+        # TODO(2): When source is un-constrained
+        # If target is LEFT/RIGHT, prefer TOP/BOT side (closest)
+        print(source, source_point)
+        # If we picked a point already, use it, otherwise pick closest side
+        target_point = closest_point(arrow.target.node, source_point or source)
+        print("Auto calc dest is", target_point)
 
     # TODO: Not all points are fixed. We should still find best path
     # from source->arrow.points[0]) or arrow.points[-1]->target
     if len(arrow.points) == 0 and isinstance(source, Cell):
         assert isinstance(target, Cell)
         # An arrow with no manual points gets auto-path
-        print("finding for s", source_point, source)
+        print("finding for s", source_point, source.geometry)
         points = find_best_path(source_point, target_point, source, target)
     else:
         # (maybe) manual points, set by the user
@@ -470,7 +511,6 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
     mpt, st = get_margin_point(target, tp)
     points = [mps]
 
-    print(ss, st)
     if {ss, st} == {Side.TOP, Side.BOTTOM}:
         # simple "N" shape
         ymid = mps.midpoint(mpt).y
@@ -494,7 +534,6 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
             points.append(Point(mps.x, mpt.y))
 
     points.append(mpt)
-    print("path points", points)
 
     return points
 
@@ -570,6 +609,6 @@ if __name__ == "__main__":
     # f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=1)
+    doc = render_file(r, page=0)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
