@@ -32,7 +32,11 @@ class Geometry:
                 height=item.height,
             )
 
-    def stretch_to_contain(self: "Geometry | None", item: "Point | Geometry") -> "Geometry":
+    def stretch_to_contain_point(self: "Geometry", item: "Point", stroke_width: float) -> "Geometry":
+        hw = stroke_width / 2
+        return self.stretch_to_contain(Geometry(item.x-hw, item.y-hw, item.x+hw, item.y+hw))
+
+    def stretch_to_contain(self: "Geometry | None", item: "Geometry") -> "Geometry":
         if self is None:
             return Geometry.from_geom(item)
         if isinstance(item, Point):
@@ -107,7 +111,7 @@ class StrokeStyle(enum.Enum):
 @dataclass
 class Stroke:
     style: StrokeStyle
-    width: int
+    width: float
     color: str
 
 
@@ -199,6 +203,11 @@ class Text:
     verticalPosition: str
     horizontalPosition: str
 
+    @property
+    def direction(self) -> "Direction":
+        # Direction _cannot_ be set on Text
+        return Direction.EAST
+
     @staticmethod
     def from_styles(id_: str, text: str, geometry: Geometry,
                     verticalPosition: str,
@@ -282,10 +291,10 @@ class Arrow:
     geometry: Optional[Geometry]
     source: Point | ArrowAtNode
     target: Point | ArrowAtNode
-    strokeColor: str
     points: list[Point]
     start_style: str
     end_style: str
+    stroke: Stroke
 
 
 @dataclass

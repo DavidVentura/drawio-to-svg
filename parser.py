@@ -5,6 +5,7 @@ Goals for now:
     2. Non-boxes
         2.0 split "Rect" from "Cell"
     3. Path finding for arrows
+    4. Rotation
 """
 
 import math
@@ -116,6 +117,10 @@ def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
     else:
         target = arrow_points.target
 
+    if styles.get("dashed") is not None:
+        ss = StrokeStyle.from_dash_pattern(styles.get("dashPattern"))
+    else:
+        ss = StrokeStyle.SOLID
     arr = Arrow(
         id=cell.get("id"),
         value=cell.get("value"),
@@ -124,7 +129,11 @@ def parse_arrow(cell: ET.Element, lut: dict[str, Cell]) -> Arrow:
         geometry=geometry,
         source=source,
         target=target,
-        strokeColor=styles.get("strokeColor", "#000"),
+        stroke=Stroke(
+            color=styles.get("strokeColor", "#000"),
+            width=float(styles.get("strokeWidth", "1")),
+            style=ss,
+        ),
         points=arrow_points.extra,
         start_style=start_style,
         end_style=end_style,
@@ -384,6 +393,7 @@ def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
         target_point = arrow.target
 
     source: Cell | Point
+    source_point: Point | None = None
     if isinstance(arrow.source, ArrowAtNode):
         source = arrow.source.node
         if arrow.source.X is not None:
@@ -404,6 +414,8 @@ def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
         source_point = closest_point(source, target_point or target)
         print("Auto calc source is", source_point)
 
+    assert source_point is not None
+
     # Unconstrained target
     if isinstance(arrow.target, ArrowAtNode) and arrow.target.X is None:
         # TODO: should use the target-margin-point
@@ -414,6 +426,8 @@ def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
         # If we picked a point already, use it, otherwise pick closest side
         target_point = closest_point(arrow.target.node, source_point or source)
         print("Auto calc dest is", target_point)
+
+    assert target_point is not None
 
     # TODO: Not all points are fixed. We should still find best path
     # from source->arrow.points[0]) or arrow.points[-1]->target
@@ -454,15 +468,16 @@ def render_arrow(arrow: Arrow) -> tuple[list[svg.Element], Geometry]:
     commands: list[svg.MoveTo | svg.LineTo] = [svg.MoveTo(start.x, start.y)]
     bb = Geometry.from_geom(start)
     for point in points[1:]:
-        # TODO: this should include stroke-width
-        bb = bb.stretch_to_contain(point)
+        bb = bb.stretch_to_contain_point(point, arrow.stroke.width)
         commands.append(svg.LineTo(point.x, point.y))
 
     path = svg.Path(
-        stroke=arrow.strokeColor,
+        stroke=arrow.stroke.color,
+        stroke_width=arrow.stroke.width,
         d=commands,
         fill="none",
         **optargs,
+        **arrow.stroke.style.as_props(),
     )
     return ([path], bb)
 
@@ -601,10 +616,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 
 if __name__ == "__main__":
-    f = Path("inputs/two-boxes-arrow.drawio")
-    # f = Path("disk.drawio")
+    # f = Path("inputs/two-boxes-arrow.drawio")
+    f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=0)
+    doc = render_file(r, page=3)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
