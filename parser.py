@@ -210,15 +210,13 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
     # the text objects. WHY?
     # FIXME: entities such as &nbsp; crash
 
-    """
-    <foreignObject width="100%" height="100%" requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility" style="overflow: visible; text-align: left;">
-      <div dir="ltr" style="display: flex; align-items: unsafe center; justify-content: unsafe flex-end; width: 242px; height: 1px; padding-top: 155px; margin-left: -209px;">
-        <div data-drawio-colors="color: rgb(0, 0, 0); " style="box-sizing: border-box; font-size: 0px; text-align: right;">
-          <div style="display: inline-block; white-space: normal; overflow-wrap: normal;">Disk 2</div>
-        </div>
-      </div>
-    </foreignObject>
-    """
+    # FIXME: text elements outside of the holding Cell have no
+    # bounding box of their own, which means the final viewBox will not
+    # consider them, for text at the edges of the diagrams
+    # for this, initially I had used the "mirrored" cell bounding box,
+    # but they are too large, and need to be cropped
+    # so we still need to somehow calculate the bounding box of text
+    # which requires a rendering library
     match text.horizontalPosition:
         case "left":
             ml = "-100%"
@@ -281,36 +279,9 @@ def render_rect(cell: Cell) -> (list[svg.Element], Geometry):
                 pass
             r = shapes.curly(cell.geometry, direction=cell.direction)
 
-    # Box alignment
-    match cell.verticalLabelPosition:
-        case "top":
-            mt = -cell.geometry.height
-        case "middle":
-            box_offset_y = 0
-        case "bottom":
-            box_offset_y = cell.geometry.height
 
-    match cell.labelPosition:
-        case "left":
-            box_offset_x = -cell.geometry.width
-        case "center":
-            box_offset_x = 0
-        case "right":
-            box_offset_x = cell.geometry.width
-
-    # This is wrong -- by making a huge bounding box, the resulting viewBox is too large
-    """
-    <foreignObject pointer-events="none" width="100%" height="100%" requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility" style="overflow: visible; text-align: left;">
-      <div xmlns="http://www.w3.org/1999/xhtml" dir="ltr" style="display: flex; align-items: unsafe center; justify-content: unsafe flex-end; width: 242px; height: 1px; padding-top: 155px; margin-left: -209px;">
-        <div data-drawio-colors="color: rgb(0, 0, 0); " style="box-sizing: border-box; font-size: 0px; text-align: right;">
-          <div style="display: inline-block; font-size: 12px; font-family: Helvetica; color: rgb(0, 0, 0); line-height: 1.2; pointer-events: all; white-space: normal; overflow-wrap: normal;">Disk 2</div>
-        </div>
-      </div>
-    </foreignObject>
-    """
     # TODO: rotation?
     bb = Geometry.from_geom(cell.geometry)
-    # FIXME geometry should be set here, at least a width, how?
     t = Text.from_styles(
         cell.id + "-text", cell.value, cell.geometry, cell.verticalLabelPosition, cell.labelPosition, cell._style
     )
