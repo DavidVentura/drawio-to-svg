@@ -131,7 +131,6 @@ class Cell:
     id: str
     value: Optional[str]
     vertex: bool
-    parent: str
     geometry: Optional[Geometry]
     fillColor: str
     stroke: Stroke
@@ -142,6 +141,8 @@ class Cell:
     verticalLabelPosition: str
     shape: Shape
     direction: "Direction"
+    parent_node: Optional["Cell"]
+    is_group: bool
 
     # Do not use. only for debugging
     _style: dict[str, str]
@@ -267,7 +268,7 @@ class Point:
 
 @dataclass
 class ArrowAtNode:
-    node: str
+    node: Cell
     X: Optional[float]
     Y: Optional[float]
 
