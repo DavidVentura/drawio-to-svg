@@ -1,1 +1,2 @@
 svg.py==1.5.0
+fonttools==4.55.3
