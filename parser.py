@@ -225,7 +225,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
     return MxFile(version=root.get("version"), diagrams=diagrams)
 
 
-def render_text(text: Text) -> tuple[svg.Element, Geometry]:
+def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Element, Geometry]:
     # Text wrapping is not supported by `Text`
     # Need to use `foreignObject` with a <span> HTML element
     # Which is also used to align text vertically with `flex`
@@ -244,6 +244,15 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
     # but they are too large, and need to be cropped
     # so we still need to somehow calculate the bounding box of text
     # which requires a rendering library
+
+    leftX = text.geometry.x
+    centerX = text.geometry.x+text.geometry.width/2
+    rightX = text.geometry.x+text.geometry.width
+
+    topY = text.geometry.y
+    centerY = text.geometry.y+text.geometry.height/2
+    botY = text.geometry.y+text.geometry.height
+
     match text.horizontalPosition:
         case "left":
             ml = "-100%"
@@ -264,23 +273,69 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
         case default:
             raise ValueError(f"Wrong vp {default}")
 
+    def off_(r: TextLine) -> tuple[float, float]:
+        g = text.geometry
+        x = 0
+        y = 0
+        # horizontalPosition and verticalPosition are alignment "outside"
+        # the box
+
+        print(text)
+        #X-align Outside the box
+        match text.horizontalPosition:
+            case "left":
+                x = leftX-g.width
+            case "center":
+                x = leftX
+            case "right":
+                x = rightX
+            case default:
+                raise ValueError(f"Wrong hp {default}")
+
+        #Y-align Outside the box
+        match text.verticalPosition:
+            case "top":
+                y = topY-g.height
+            case "middle":
+                y = topY
+            case "bottom":
+                y = botY
+            case default:
+                raise ValueError(f"Wrong vp {default}")
+
+        # Inside the box
+        match text.verticalAlign:
+            case "start":
+                y += r.h
+            case "center":
+                y += g.height/2 + r.ascent/2
+            case "end":
+                y += g.height - r.descent
+            case default:
+                raise ValueError(f"Wrong va {default}")
+
+        # Inside the box
+        match text.alignment:
+            case "left":
+                x -= 0
+            case "center":
+                x += g.width/2-r.w/2
+            case "right":
+                x += g.width-r.w
+            case default:
+                raise ValueError(f"Wrong ta {default}")
+        return (x, y)
+
     textContent = text.value.replace("<br>", "<br/>").replace("&nbsp;", " ")
     assert text.fontFamily == "Helvetica"
-    assert "px" in text.fontSize
     f = FontRenderer(f"{text.fontFamily.lower()}.ttf", int(text.fontSize.replace("px", "")))
     rendered = f.render(textContent) #, text.geometry.x, text.geometry.y)
-    centerX = text.geometry.x+text.geometry.width/2
-    centerY = text.geometry.y+text.geometry.height/2
 
-    # This should be "If explode (always?) then render, otherwise foreignobject
-    # It's _ass_ to maintain two implementations, but it should be good to compare them
-    # to each other.
-    # Regardless, we still need to render it to get the bounding box
     r_text = []
+
     for r in rendered:
-        # FIXME this r.h / 3 is WRONG
-        path = r.path(centerX-r.w/2, centerY+r.h/3)
-        path.stroke = "#000"
+        path = r.path(*off_(r))
+        path.stroke = "#f00"
         path.stroke_width = 0.3
         r_text.append(path)
 
@@ -299,9 +354,23 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
         ],
         style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
     )
-    t = svg.G(elements=r_text)
+    t = svg.G(elements=r_text+[t])
 
-    return (t, Geometry(text.geometry.x, text.geometry.y, rendered[0].w, rendered[0].h))
+    final_pos_x, final_pos_y = off_(rendered[0])
+    _x = text.geometry.x
+    _y = text.geometry.y
+
+    # FIXME bounding box of things to the right is broken
+    if _x > final_pos_x:
+        _x = final_pos_x
+
+    if _y > final_pos_y:
+        _y = final_pos_y-rendered[0].ascent
+
+    _h = _y-text.geometry.y+rendered[0].h
+    _w = _x-text.geometry.x+rendered[0].w
+
+    return (t, Geometry(_x, _y, _w, _h))
     return (t, text.geometry)
 
 
@@ -648,6 +717,7 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 if __name__ == "__main__":
     f = Path("inputs/two-boxes-arrow.drawio")
+    f = Path("inputs/text-align.drawio")
     # f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
