@@ -10,9 +10,12 @@ from svg_pen import SVGPathPen
 
 @dataclass
 class TextLine:
-    path: svg.Path
+    pen: SVGPathPen
     w: float
     h: float
+
+    def path(self, x_offset: float = 0.0, y_offset: float = 0.0) -> svg.Path:
+        return self.pen.getCommands(x_offset, y_offset)
 
 
 class FontRenderer:
@@ -38,8 +41,7 @@ class FontRenderer:
             # TODO: this is letter-level word-wrap
             # Maybe better to do word-level?
             if (x_offset + glyph.width) > max_w:
-                path = pen.getCommands()
-                tl = TextLine(path, x_offset * self.scale, height * self.scale)
+                tl = TextLine(pen, x_offset * self.scale, height * self.scale)
                 ret.append(tl)
                 x_offset = 0.0
                 pen = SVGPathPen(self.glyph_set, self.scale)
@@ -47,10 +49,8 @@ class FontRenderer:
             glyf.draw(pen, self.glyph_set.glyfTable, x_offset)
             x_offset += glyph.width
 
-        path = pen.getCommands()
-        tl = TextLine(path, x_offset * self.scale, height * self.scale)
+        tl = TextLine(pen, x_offset * self.scale, height * self.scale)
         ret.append(tl)
-        path = pen.getCommands()
         return ret
 
 

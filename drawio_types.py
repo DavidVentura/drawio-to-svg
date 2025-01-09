@@ -197,7 +197,7 @@ class EdgeLabel:
     pathPercentage: float
     orthogonalDistance: float
     offset: 'Point'
-    """
+    __doc__ = """
     EdgeLabel abuses the cell format quite a bit:
 
     <mxCell value="Text" style="edgeLabel" parent="iTblz-XGe7cfMYIo-zEC-33">

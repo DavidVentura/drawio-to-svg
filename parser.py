@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from drawio_types import *
+from text_expander import FontRenderer, TextLine
 
 import xml.etree.ElementTree as ET
 
@@ -174,7 +175,8 @@ def parse_mxfile(xml_string: str) -> MxFile:
             elif styles.get("text") is not None:
                 c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, "middle", "center", styles)
             elif styles.get("edgeLabel") is not None:
-                c = EdgeLabel(cell.get("id"), cell.get("value"), geometry)
+                # FIXME point/offset
+                c = EdgeLabel(cell.get("id"), cell.get("value"), geometry.x, geometry.y, Point(0, 0))
             else:
                 if styles.get("dashed") is not None:
                     ss = StrokeStyle.from_dash_pattern(styles.get("dashPattern"))
@@ -263,6 +265,25 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
             raise ValueError(f"Wrong vp {default}")
 
     textContent = text.value.replace("<br>", "<br/>").replace("&nbsp;", " ")
+    assert text.fontFamily == "Helvetica"
+    assert "px" in text.fontSize
+    f = FontRenderer(f"{text.fontFamily.lower()}.ttf", int(text.fontSize.replace("px", "")))
+    rendered = f.render(textContent) #, text.geometry.x, text.geometry.y)
+    centerX = text.geometry.x+text.geometry.width/2
+    centerY = text.geometry.y+text.geometry.height/2
+
+    # This should be "If explode (always?) then render, otherwise foreignobject
+    # It's _ass_ to maintain two implementations, but it should be good to compare them
+    # to each other.
+    # Regardless, we still need to render it to get the bounding box
+    r_text = []
+    for r in rendered:
+        # FIXME this r.h / 3 is WRONG
+        path = r.path(centerX-r.w/2, centerY+r.h/3)
+        path.stroke = "#000"
+        path.stroke_width = 0.3
+        r_text.append(path)
+
     t = svg.ForeignObject(
         x=text.geometry.x,
         y=text.geometry.y,
@@ -273,11 +294,14 @@ def render_text(text: Text) -> tuple[svg.Element, Geometry]:
                 HTMLDiv(
                     style=f"display: flex; flex-direction: row; align-items: {text.verticalAlign}; width: 100%; height: 100%; transform:translate({ml}, {mt});",
                     elements=[HTMLSpan(text=textContent, style="width: 100%")],
-                )
+                ),
                 #])
         ],
         style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
     )
+    t = svg.G(elements=r_text)
+
+    return (t, Geometry(text.geometry.x, text.geometry.y, rendered[0].w, rendered[0].h))
     return (t, text.geometry)
 
 
@@ -559,8 +583,6 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
     main_bb = None
     # Rendering order depends on cell order
     for cell in root.cells:
-        if cell.geometry is None:
-            continue
         if isinstance(cell, Arrow):
             svge, bb = render_arrow(cell)
             main_bb = Geometry.stretch_to_contain(main_bb, bb)
@@ -576,6 +598,8 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             #raise NotImplementedError
             continue
         if cell.is_group:
+            continue
+        if cell.geometry is None:
             continue
         # Assuming rect
         svge, bb = render_rect(cell)
