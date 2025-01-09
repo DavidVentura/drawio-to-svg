@@ -191,6 +191,28 @@ class Cell:
 
 
 @dataclass
+class EdgeLabel:
+    id: str
+    value: str
+    pathPercentage: float
+    orthogonalDistance: float
+    offset: 'Point'
+    """
+    EdgeLabel abuses the cell format quite a bit:
+
+    <mxCell value="Text" style="edgeLabel" parent="iTblz-XGe7cfMYIo-zEC-33">
+      <mxGeometry x="0.59" y="9" relative="1" as="geometry">
+        <mxPoint x="5" y="1" as="offset" />
+      </mxGeometry>
+    </mxCell>
+
+    The mxGeometry X means "How far along the arrow, as a percentage (0.0-1.0) should the label be
+    The mxGeometry Y is "orthogonal distance to the arrow"
+
+    The mxPoint X/Y are static offsets from the previous point
+    """
+
+@dataclass
 class Text:
     id: str
     value: str

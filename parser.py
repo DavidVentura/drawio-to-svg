@@ -1,11 +1,12 @@
 """
 Goals for now:
-    0. Label rendering outside of box, size is wrong
-    1. Non-HTML text decoration
-    2. Non-boxes
-        2.0 split "Rect" from "Cell"
-    3. Path finding for arrows
-    4. Rotation
+    - Label rendering outside of box, size is wrong
+    - EdgeLabel support
+    - Non-HTML text decoration
+    - Non-boxes
+      - split "Rect" from "Cell"
+    - Path finding for arrows
+    - Rotation
 """
 
 import math
@@ -164,7 +165,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
             geometry = None
             if _g is not None:
                 pg = None
-                if parent_node.geometry:
+                if parent_node and parent_node.geometry:
                     pg = parent_node.geometry
                 geometry = parse_geometry(_g, pg)
 
@@ -172,6 +173,8 @@ def parse_mxfile(xml_string: str) -> MxFile:
                 c = parse_arrow(cell, lut)
             elif styles.get("text") is not None:
                 c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, "middle", "center", styles)
+            elif styles.get("edgeLabel") is not None:
+                c = EdgeLabel(cell.get("id"), cell.get("value"), geometry)
             else:
                 if styles.get("dashed") is not None:
                     ss = StrokeStyle.from_dash_pattern(styles.get("dashPattern"))
@@ -568,6 +571,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             main_bb = Geometry.stretch_to_contain(main_bb, bb)
             elements.append(svge)
             continue
+        elif isinstance(cell, EdgeLabel):
+            print("ignoring edgelabel")
+            #raise NotImplementedError
+            continue
         if cell.is_group:
             continue
         # Assuming rect
@@ -616,10 +623,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 
 if __name__ == "__main__":
-    # f = Path("inputs/two-boxes-arrow.drawio")
-    f = Path("disk.drawio")
+    f = Path("inputs/two-boxes-arrow.drawio")
+    # f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=3)
+    doc = render_file(r, page=1)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
