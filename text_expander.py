@@ -13,9 +13,17 @@ class TextLine:
     pen: SVGPathPen
     w: float
     h: float
+    ascent: float
 
     def path(self, x_offset: float = 0.0, y_offset: float = 0.0) -> svg.Path:
         return self.pen.getCommands(x_offset, y_offset)
+
+    @property
+    def descent(self) -> float:
+        """
+        How much, in pixels, the font should be offset from origin, downwards
+        """
+        return self.h - self.ascent
 
 
 class FontRenderer:
@@ -25,6 +33,7 @@ class FontRenderer:
         self.cmap = self.font.getBestCmap()
         self.units_per_em = float(self.font["head"].unitsPerEm)
         self.scale = font_size_px / self.units_per_em
+        self.hhea = self.font['hhea']
 
     def render(self, data: str, max_w: float = math.inf) -> list[TextLine]:
         height = self.units_per_em
@@ -41,7 +50,7 @@ class FontRenderer:
             # TODO: this is letter-level word-wrap
             # Maybe better to do word-level?
             if (x_offset + glyph.width) > max_w:
-                tl = TextLine(pen, x_offset * self.scale, height * self.scale)
+                tl = TextLine(pen, x_offset * self.scale, height * self.scale, self.hhea.ascent * self.scale)
                 ret.append(tl)
                 x_offset = 0.0
                 pen = SVGPathPen(self.glyph_set, self.scale)
@@ -49,30 +58,6 @@ class FontRenderer:
             glyf.draw(pen, self.glyph_set.glyfTable, x_offset)
             x_offset += glyph.width
 
-        tl = TextLine(pen, x_offset * self.scale, height * self.scale)
+        tl = TextLine(pen, x_offset * self.scale, height * self.scale, self.hhea.ascent * self.scale)
         ret.append(tl)
         return ret
-
-
-def main():
-    paths = []
-    maxw = 0.0
-    hoff = 0.0
-    for fn in ["helvetica.ttf", "helvetica-bold.ttf", "helvetica-italic.ttf"]:
-        f = FontRenderer(fn, 16)
-        tls = f.render("aaaaaaabbbbbccc", 100)
-        for line in tls:
-            maxw = max(line.w, maxw)
-            paths.append(f"""<g transform="translate(0, {hoff})">{line.path}</g>""")
-            hoff += line.h
-
-    print(
-        f"""
-    <svg width="{maxw*2}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {maxw} {hoff}">
-          {"".join(paths)}
-    </svg>
-    """
-    )
-
-
-main()
