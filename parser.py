@@ -351,9 +351,11 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
         if text.styled_as_html:
             bold = token.bold
             italic = token.italic
+            color = token.color or text.strokeColor
         else:
             bold = text.fontStyle.bold
             italic = text.fontStyle.italic
+            color = text.fontColor
 
         match bold, italic:
             case (False, False):
@@ -381,7 +383,7 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
             y += y_off
             x_off += line.w
             path = line.path(x, y)
-            path.fill = token.color or text.strokeColor
+            path.fill = color
 
             geom = Geometry.stretch_to_contain(geom, Geometry(x, y-line.ascent, line.w, line.h))
             r_text.append(path)
@@ -763,10 +765,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 if __name__ == "__main__":
     f = Path("inputs/two-boxes-arrow.drawio")
-    f = Path("disk.drawio")
     f = Path("inputs/text-align.drawio")
+    f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=2)
+    doc = render_file(r, page=3)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)

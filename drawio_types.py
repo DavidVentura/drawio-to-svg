@@ -225,6 +225,7 @@ class Text:
     verticalPosition: str
     horizontalPosition: str
     fontStyle: "FontStyle"
+    fontColor: str
 
     @property
     def direction(self) -> "Direction":
@@ -248,6 +249,12 @@ class Text:
         color = style.get("strokeColor", "#000")
         if color == "none":
             color = "#000"
+
+        # TODO: there's a "basic style" and "html style"
+        # even though both can be set at the same time,
+        # only one is valid to use.
+        # Switch styles to BasicStyle | HTMLStyle
+        # or similar
         return Text(
             id=id_,
             value=text,
@@ -260,6 +267,7 @@ class Text:
             verticalPosition=verticalPosition,
             horizontalPosition=horizontalPosition,
             fontStyle=FontStyle.from_bitflags(int(style.get("fontStyle", 0))),
+            fontColor=style.get("fontColor", "#000"),
         )
 
 
