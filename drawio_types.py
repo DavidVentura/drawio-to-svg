@@ -240,11 +240,14 @@ class Text:
             "bottom": "end",
             "top": "start",
         }
+        color = style.get("strokeColor", "#000")
+        if color == "none":
+            color = "#000"
         return Text(
             id=id_,
             value=text,
             geometry=geometry,
-            strokeColor=style.get("strokeColor", "#000"),
+            strokeColor=color,
             fontSize=style.get("fontSize", "12px"),
             alignment=style.get("align", "center"),
             fontFamily=style.get("fontFamily", "Helvetica"),
