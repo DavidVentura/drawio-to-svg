@@ -280,7 +280,7 @@ def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Elemen
         # horizontalPosition and verticalPosition are alignment "outside"
         # the box
 
-        print(text)
+        #print(text)
         #X-align Outside the box
         match text.horizontalPosition:
             case "left":
@@ -357,20 +357,13 @@ def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Elemen
     t = svg.G(elements=r_text+[t])
 
     final_pos_x, final_pos_y = off_(rendered[0])
-    _x = text.geometry.x
-    _y = text.geometry.y
 
-    # FIXME bounding box of things to the right is broken
-    if _x > final_pos_x:
-        _x = final_pos_x
-
-    if _y > final_pos_y:
-        _y = final_pos_y-rendered[0].ascent
-
-    _h = _y-text.geometry.y+rendered[0].h
-    _w = _x-text.geometry.x+rendered[0].w
-
-    return (t, Geometry(_x, _y, _w, _h))
+    _x = final_pos_x
+    _y = final_pos_y-rendered[0].ascent
+    _h = rendered[0].h
+    _w = rendered[0].w
+    ret_geom = Geometry(_x, _y, _w, _h)
+    return (t, ret_geom)
     return (t, text.geometry)
 
 
@@ -721,6 +714,6 @@ if __name__ == "__main__":
     # f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=1)
+    doc = render_file(r, page=0)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
