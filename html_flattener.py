@@ -32,6 +32,9 @@ class HTMLToTokenParser(HTMLParser):
         if tag == "div":
             if self.tokens:
                 self.tokens.append(NewlineToken())
+        elif tag == "br":
+            if self.tokens:
+                self.tokens.append(NewlineToken())
         elif tag == "b":
             self.bold = True
         elif tag == "i":
