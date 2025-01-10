@@ -1,7 +1,7 @@
-
 import svg
 
 from drawio_types import Geometry, Direction
+
 
 def curly(g: Geometry, direction: Direction) -> svg.Path:
     # Generated poking around on
@@ -9,9 +9,9 @@ def curly(g: Geometry, direction: Direction) -> svg.Path:
 
     # TODO: Direction flips width/height!
 
-    right = g.x+g.width
+    right = g.x + g.width
     bot = g.y + g.height
-    centerY = g.y + g.height/2
+    centerY = g.y + g.height / 2
 
     # TODO: curlyLeft/curlyRight are _customizable_
     # meaning that while width is constant
@@ -25,12 +25,12 @@ def curly(g: Geometry, direction: Direction) -> svg.Path:
         svg.MoveTo(g.x, bot),
         svg.LineTo(curlyLeft, bot),
         # Curly
-        svg.CubicBezier(curlyRight, bot, curlyLeft, centerY, curlyRight, centerY), # curve
+        svg.CubicBezier(curlyRight, bot, curlyLeft, centerY, curlyRight, centerY),  # curve
         # "Point"
         svg.LineTo(right, centerY),
         svg.MoveTo(curlyRight, centerY),
         # End "Point"
-        svg.CubicBezier(curlyLeft, centerY, curlyRight, g.y, curlyLeft, g.y), # curve
+        svg.CubicBezier(curlyLeft, centerY, curlyRight, g.y, curlyLeft, g.y),  # curve
         # End curly
         svg.LineTo(g.x, g.y),
         # Do not close
@@ -39,11 +39,11 @@ def curly(g: Geometry, direction: Direction) -> svg.Path:
     ]
     rotation_angle = direction.rotation_angle()
     return svg.Path(
-            d=points,
-            fill="none",
-            stroke="rgb(0, 0, 0)",
-            # TODO: arg
-            transform=[svg.Rotate(rotation_angle)],
-            # rotate around the center
-            style="transform-box: fill-box; transform-origin: center;"
+        d=points,
+        fill="none",
+        stroke="rgb(0, 0, 0)",
+        # TODO: arg
+        transform=[svg.Rotate(rotation_angle)],
+        # rotate around the center
+        style="transform-box: fill-box; transform-origin: center;",
     )

@@ -34,7 +34,7 @@ class Geometry:
 
     def stretch_to_contain_point(self: "Geometry", item: "Point", stroke_width: float) -> "Geometry":
         hw = stroke_width / 2
-        return self.stretch_to_contain(Geometry(item.x-hw, item.y-hw, item.x+hw, item.y+hw))
+        return self.stretch_to_contain(Geometry(item.x - hw, item.y - hw, item.x + hw, item.y + hw))
 
     def stretch_to_contain(self: "Geometry | None", item: "Geometry") -> "Geometry":
         if self is None:
@@ -196,7 +196,7 @@ class EdgeLabel:
     value: str
     pathPercentage: float
     orthogonalDistance: float
-    offset: 'Point'
+    offset: "Point"
     __doc__ = """
     EdgeLabel abuses the cell format quite a bit:
 
@@ -211,6 +211,7 @@ class EdgeLabel:
 
     The mxPoint X/Y are static offsets from the previous point
     """
+
 
 @dataclass
 class Text:
@@ -237,10 +238,9 @@ class Text:
         return "<" in self.value
 
     @staticmethod
-    def from_styles(id_: str, text: str, geometry: Geometry,
-                    verticalPosition: str,
-                    horizontalPosition: str,
-                    style: dict[str, str]) -> "Text":
+    def from_styles(
+        id_: str, text: str, geometry: Geometry, verticalPosition: str, horizontalPosition: str, style: dict[str, str]
+    ) -> "Text":
         va_lut = {
             "middle": "center",
             "bottom": "end",
@@ -410,6 +410,7 @@ class Direction(enum.Enum):
             case Direction.EAST:
                 return 0
 
+
 @dataclass
 class FontStyle:
     bold: bool
@@ -417,7 +418,7 @@ class FontStyle:
     underline: bool
 
     @staticmethod
-    def from_bitflags(val: int) -> 'FontStyle':
+    def from_bitflags(val: int) -> "FontStyle":
         return FontStyle(
             bold=val & 0b1 == 0b1,
             italic=val & 0b10 == 0b10,

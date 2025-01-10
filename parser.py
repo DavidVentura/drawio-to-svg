@@ -26,13 +26,15 @@ import xml.etree.ElementTree as ET
 
 _font_cache = {}
 
+
 def get_font(font_fam: str, style: str, font_size: int) -> FontRenderer:
-    key = f'{font_fam}-{style}'
+    key = f"{font_fam}-{style}"
     if f := _font_cache.get(key):
         return f
     f = FontRenderer(f"{key}.ttf", font_size)
     _font_cache[key] = f
     return f
+
 
 def opt_float(val: str | None) -> float | None:
     if val is None:
@@ -205,7 +207,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     geometry=geometry,
                     _style=styles,
                     stroke=stroke,
-                    fillColor=styles.get("fillColor", "#fff"), # TODO "default" value
+                    fillColor=styles.get("fillColor", "#fff"),  # TODO "default" value
                     opacity=float(styles.get("opacity", "100")) / 100.0,
                     # left center right
                     labelPosition=styles.get("labelPosition", "center"),
@@ -271,22 +273,23 @@ def _render_browser_text(text: Text, textContent: str) -> svg.Element:
     )
     return t
 
+
 def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
     leftX = text.geometry.x
-    rightX = text.geometry.x+text.geometry.width
+    rightX = text.geometry.x + text.geometry.width
 
     topY = text.geometry.y
-    botY = text.geometry.y+text.geometry.height
+    botY = text.geometry.y + text.geometry.height
 
     def off_(r: TextLine) -> tuple[float, float]:
         g = text.geometry
         x = 0
         y = 0
 
-        #X-align Outside the box
+        # X-align Outside the box
         match text.horizontalPosition:
             case "left":
-                x = leftX-g.width
+                x = leftX - g.width
             case "center":
                 x = leftX
             case "right":
@@ -294,10 +297,10 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
             case default:
                 raise ValueError(f"Wrong hp {default}")
 
-        #Y-align Outside the box
+        # Y-align Outside the box
         match text.verticalPosition:
             case "top":
-                y = topY-g.height
+                y = topY - g.height
             case "middle":
                 y = topY
             case "bottom":
@@ -310,7 +313,7 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
             case "start":
                 y += r.h
             case "center":
-                y += g.height/2 + r.ascent/2
+                y += g.height / 2 + r.ascent / 2
             case "end":
                 y += g.height - r.descent
             case default:
@@ -321,9 +324,9 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
             case "left":
                 x -= 0
             case "center":
-                x += g.width/2-r.w/2
+                x += g.width / 2 - r.w / 2
             case "right":
-                x += g.width-r.w
+                x += g.width - r.w
             case default:
                 raise ValueError(f"Wrong ta {default}")
         return (x, y)
@@ -371,7 +374,7 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
 
         f = get_font(ff, style, fs)
         # FIXME is 6px the right margin??
-        rendered = f.render(token.text, text.geometry.width-6)
+        rendered = f.render(token.text, text.geometry.width - 6)
 
         for idx, line in enumerate(rendered):
             ascent = line.ascent
@@ -385,17 +388,18 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
             path = line.path(x, y)
             path.fill = color
 
-            geom = Geometry.stretch_to_contain(geom, Geometry(x, y-line.ascent, line.w, line.h))
+            geom = Geometry.stretch_to_contain(geom, Geometry(x, y - line.ascent, line.w, line.h))
             r_text.append(path)
 
     assert geom is not None
     assert ascent != 0.0
     # TODO: doing translate like this requires manual fix to the geometry
     # it should be better
-    deltaY = -geom.height/2+ascent/2
+    deltaY = -geom.height / 2 + ascent / 2
     translated = svg.G(elements=r_text, transform=[svg.Translate(0, deltaY)])
     geom.y += deltaY
     return translated, geom
+
 
 def render_text(text: Text, browser_text=False, explode=True):
 
@@ -442,7 +446,6 @@ def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
                 cell.geometry.height = w
                 pass
             r = shapes.curly(cell.geometry, direction=cell.direction)
-
 
     # TODO: rotation?
     bb = Geometry.from_geom(cell.geometry)
@@ -507,13 +510,14 @@ def point_from_rotated_cell(c: Cell, arrow: ArrowAtNode) -> Point:
         case Direction.NORTH:
             # Flip axes AND y-factor
             x_factor = arrow.Y
-            y_factor = 1-arrow.X
+            y_factor = 1 - arrow.X
 
     point = Point(
         c.geometry.x + c.geometry.width * x_factor,
         c.geometry.y + c.geometry.height * y_factor,
     )
     return point
+
 
 # 3 types of handling:
 # - node to node, unconstrained
@@ -712,7 +716,7 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             continue
         elif isinstance(cell, EdgeLabel):
             print("ignoring edgelabel")
-            #raise NotImplementedError
+            # raise NotImplementedError
             continue
         if cell.is_group:
             continue

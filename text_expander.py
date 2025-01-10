@@ -33,7 +33,7 @@ class FontRenderer:
         self.cmap = self.font.getBestCmap()
         self.units_per_em = float(self.font["head"].unitsPerEm)
         self.scale = font_size_px / self.units_per_em
-        self.hhea = self.font['hhea']
+        self.hhea = self.font["hhea"]
         self.font_height_px = self.units_per_em * self.scale
 
     def render(self, data: str, max_w: float = math.inf) -> list[TextLine]:
