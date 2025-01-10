@@ -330,7 +330,7 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
 
     assert text.fontFamily == "Helvetica"
 
-    fs =  int(text.fontSize.replace("px", ""))
+    fs = int(text.fontSize.replace("px", ""))
 
     ff = text.fontFamily.lower()
 
@@ -343,12 +343,19 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
     x_off = 0.0
     ascent = 0.0
     for token in parsed:
-        print(token, y_off)
         if isinstance(token, NewlineToken):
             x_off = 0.0
             y_off += get_font(ff, "regular", fs).font_height_px
             continue
-        match token.bold, token.italic:
+
+        if text.styled_as_html:
+            bold = token.bold
+            italic = token.italic
+        else:
+            bold = text.fontStyle.bold
+            italic = text.fontStyle.italic
+
+        match bold, italic:
             case (False, False):
                 style = "regular"
             case (True, False):
@@ -756,10 +763,10 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 
 if __name__ == "__main__":
     f = Path("inputs/two-boxes-arrow.drawio")
-    f = Path("inputs/text-align.drawio")
     f = Path("disk.drawio")
+    f = Path("inputs/text-align.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=3)
+    doc = render_file(r, page=2)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)

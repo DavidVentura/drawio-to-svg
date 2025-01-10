@@ -224,11 +224,16 @@ class Text:
     verticalAlign: str
     verticalPosition: str
     horizontalPosition: str
+    fontStyle: "FontStyle"
 
     @property
     def direction(self) -> "Direction":
         # Direction _cannot_ be set on Text
         return Direction.EAST
+
+    @property
+    def styled_as_html(self):
+        return "<" in self.value
 
     @staticmethod
     def from_styles(id_: str, text: str, geometry: Geometry,
@@ -254,6 +259,7 @@ class Text:
             verticalAlign=va_lut[style.get("verticalAlign", "middle")],
             verticalPosition=verticalPosition,
             horizontalPosition=horizontalPosition,
+            fontStyle=FontStyle.from_bitflags(int(style.get("fontStyle", 0))),
         )
 
 
@@ -395,3 +401,17 @@ class Direction(enum.Enum):
                 return 180
             case Direction.EAST:
                 return 0
+
+@dataclass
+class FontStyle:
+    bold: bool
+    italic: bool
+    underline: bool
+
+    @staticmethod
+    def from_bitflags(val: int) -> 'FontStyle':
+        return FontStyle(
+            bold=val & 0b1 == 0b1,
+            italic=val & 0b10 == 0b10,
+            underline=val & 0b100 == 0b100,
+        )
