@@ -20,6 +20,7 @@ from typing import Optional
 
 from drawio_types import *
 from text_expander import FontRenderer, TextLine
+from html_flattener import parse_html, NewlineToken, TextToken
 
 import xml.etree.ElementTree as ET
 
@@ -225,34 +226,7 @@ def parse_mxfile(xml_string: str) -> MxFile:
     return MxFile(version=root.get("version"), diagrams=diagrams)
 
 
-def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Element, Geometry]:
-    # Text wrapping is not supported by `Text`
-    # Need to use `foreignObject` with a <span> HTML element
-    # Which is also used to align text vertically with `flex`
-
-    # FIXME DANGER this pipes HTML straight in
-    # - always need to close tags
-    # There's basic styling supported in the text element in drawio
-    # but also, you can inject arbitrary HTML if you double-click
-    # the text objects. WHY?
-    # FIXME: entities such as &nbsp; crash
-
-    # FIXME: text elements outside of the holding Cell have no
-    # bounding box of their own, which means the final viewBox will not
-    # consider them, for text at the edges of the diagrams
-    # for this, initially I had used the "mirrored" cell bounding box,
-    # but they are too large, and need to be cropped
-    # so we still need to somehow calculate the bounding box of text
-    # which requires a rendering library
-
-    leftX = text.geometry.x
-    centerX = text.geometry.x+text.geometry.width/2
-    rightX = text.geometry.x+text.geometry.width
-
-    topY = text.geometry.y
-    centerY = text.geometry.y+text.geometry.height/2
-    botY = text.geometry.y+text.geometry.height
-
+def _render_browser_text(text: Text, textContent: str) -> svg.Element:
     match text.horizontalPosition:
         case "left":
             ml = "-100%"
@@ -273,6 +247,28 @@ def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Elemen
         case default:
             raise ValueError(f"Wrong vp {default}")
 
+    t = svg.ForeignObject(
+        x=text.geometry.x,
+        y=text.geometry.y,
+        width=text.geometry.width,
+        height=text.geometry.height,
+        elements=[
+            HTMLDiv(
+                style=f"display: flex; flex-direction: row; align-items: {text.verticalAlign}; width: 100%; height: 100%; transform:translate({ml}, {mt});",
+                elements=[HTMLSpan(text=textContent, style="width: 100%")],
+            ),
+        ],
+        style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
+    )
+    return t
+
+def _render_exploded_text(text: Text) -> tuple[list[svg.Path], list[Geometry]]:
+    leftX = text.geometry.x
+    rightX = text.geometry.x+text.geometry.width
+
+    topY = text.geometry.y
+    botY = text.geometry.y+text.geometry.height
+
     def off_(r: TextLine) -> tuple[float, float]:
         g = text.geometry
         x = 0
@@ -280,7 +276,6 @@ def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Elemen
         # horizontalPosition and verticalPosition are alignment "outside"
         # the box
 
-        #print(text)
         #X-align Outside the box
         match text.horizontalPosition:
             case "left":
@@ -326,45 +321,88 @@ def render_text(text: Text, browser_text=True, explode=True) -> tuple[svg.Elemen
                 raise ValueError(f"Wrong ta {default}")
         return (x, y)
 
-    textContent = text.value.replace("<br>", "<br/>").replace("&nbsp;", " ")
     assert text.fontFamily == "Helvetica"
-    f = FontRenderer(f"{text.fontFamily.lower()}.ttf", int(text.fontSize.replace("px", "")))
-    rendered = f.render(textContent) #, text.geometry.x, text.geometry.y)
+
+    fs =  int(text.fontSize.replace("px", ""))
+
+    ff = text.fontFamily.lower()
+    font_by_style = {
+        'regular': FontRenderer(f"{ff}.ttf", fs),
+        'bold': FontRenderer(f"{ff}-bold.ttf", fs),
+        'italic': FontRenderer(f"{ff}-italic.ttf", fs),
+        'bold-italic': FontRenderer(f"{ff}-bold-italic.ttf", fs),
+    }
+
+    # TODO: the alignment is broken, need to perform "holistic" alignment
+    # as multiple tokens end up making a larger block, which needs to be centered
+    # right now, the `off_` function only considers individual token sizes
+    parsed: list[NewlineToken | TextToken] = parse_html(text.value)
 
     r_text = []
+    geoms = []
 
-    for r in rendered:
-        path = r.path(*off_(r))
-        path.stroke = "#f00"
-        path.stroke_width = 0.3
-        r_text.append(path)
+    y_off = 0.0
+    x_off = 0.0
+    for token in parsed:
+        if isinstance(token, NewlineToken):
+            x_off = 0.0
+            y_off += font_by_style["regular"].font_height_px
+            continue
+        match token.bold, token.italic:
+            case (False, False):
+                style = "regular"
+            case (True, False):
+                style = "bold"
+            case (False, True):
+                style = "italic"
+            case (True, True):
+                style = "bold-italic"
+            case default:
+                raise ValueError(f"Illegal token state {token}={default}")
 
-    t = svg.ForeignObject(
-        x=text.geometry.x,
-        y=text.geometry.y,
-        width=text.geometry.width,
-        height=text.geometry.height,
-        elements=[
-            #HTMLDiv(elements=[
-                HTMLDiv(
-                    style=f"display: flex; flex-direction: row; align-items: {text.verticalAlign}; width: 100%; height: 100%; transform:translate({ml}, {mt});",
-                    elements=[HTMLSpan(text=textContent, style="width: 100%")],
-                ),
-                #])
-        ],
-        style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
-    )
-    t = svg.G(elements=r_text+[t])
+        f = font_by_style[style]
+        rendered = f.render(token.text)
+        for r in rendered:
+            x, y = off_(r)
+            x+= x_off
+            y+= y_off
+            x_off += r.w
+            path = r.path(x, y)
+            path.fill = token.color or text.strokeColor
 
-    final_pos_x, final_pos_y = off_(rendered[0])
+            geoms.append(Geometry(x, y-r.ascent, r.w, r.h))
+            r_text.append(path)
+    return r_text, geoms
 
-    _x = final_pos_x
-    _y = final_pos_y-rendered[0].ascent
-    _h = rendered[0].h
-    _w = rendered[0].w
-    ret_geom = Geometry(_x, _y, _w, _h)
-    return (t, ret_geom)
-    return (t, text.geometry)
+def render_text(text: Text, browser_text=False, explode=True):
+    # Text wrapping is not supported by `Text`
+    # Need to use `foreignObject` with a <span> HTML element
+    # Which is also used to align text vertically with `flex`
+
+    # FIXME DANGER this pipes HTML straight in
+    # - always need to close tags
+    # There's basic styling supported in the text element in drawio
+    # but also, you can inject arbitrary HTML if you double-click
+    # the text objects. WHY?
+    # FIXME: entities such as &nbsp; crash
+
+    elems = []
+    paths, geoms = _render_exploded_text(text)
+    if explode:
+        elems.extend(paths)
+
+    if browser_text:
+        # "basic" sanitization for unsupported svg features
+        textContent = text.value.replace("<br>", "<br/>").replace("&nbsp;", " ")
+        elems.append(_render_browser_text(text, textContent))
+
+    t = svg.G(elements=elems)
+
+    #assert len(geoms) == 1, "multiple geoms not supported yet"
+    #g = Geometry(0,0,0,0)
+    #for _g in geoms:
+    #    g.stretch_to_contain(_g)
+    return (t, geoms[0])
 
 
 def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
@@ -400,9 +438,12 @@ def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
     # t.geometry.x += box_offset_x
     # t.geometry.y += box_offset_y
     bb = bb.stretch_to_contain(t.geometry)
-    content, bb2 = render_text(t)
-    bb = bb.stretch_to_contain(bb2)
-    return ([r, content], bb)
+    ret = [r]
+    if t.value:
+        content, bb2 = render_text(t)
+        bb = bb.stretch_to_contain(bb2)
+        ret.append(content)
+    return (ret, bb)
 
 
 def closest_point(a: Cell | Point, b: Cell | Point) -> Point:
@@ -714,6 +755,6 @@ if __name__ == "__main__":
     # f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=0)
+    doc = render_file(r, page=1)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
