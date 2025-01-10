@@ -9,7 +9,9 @@ def curly(g: Geometry, direction: Direction) -> svg.Path:
 
     # TODO: Direction flips width/height!
 
-    right = g.x + g.width
+    # FIXME: this 'tactical' 3 makes the tip
+    # less sharp
+    right = g.x + g.width - 3
     bot = g.y + g.height
     centerY = g.y + g.height / 2
 

@@ -373,8 +373,10 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
                 raise ValueError(f"Illegal token state {token}={default}")
 
         f = get_font(ff, style, fs)
-        # FIXME is 6px the right margin??
-        rendered = f.render(token.text, text.geometry.width - 6)
+        # TODO inside boxes, there is some kind of margin, looks like
+        # 6px total (3px left 3px right)
+        # but .. not outside boxes?
+        rendered = f.render(token.text, text.geometry.width)
 
         for idx, line in enumerate(rendered):
             ascent = line.ascent
