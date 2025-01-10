@@ -24,6 +24,15 @@ from html_flattener import parse_html, NewlineToken, TextToken
 
 import xml.etree.ElementTree as ET
 
+_font_cache = {}
+
+def get_font(font_fam: str, style: str, font_size: int) -> FontRenderer:
+    key = f'{font_fam}-{style}'
+    if f := _font_cache.get(key):
+        return f
+    f = FontRenderer(f"{key}.ttf", font_size)
+    _font_cache[key] = f
+    return f
 
 def opt_float(val: str | None) -> float | None:
     if val is None:
@@ -262,7 +271,7 @@ def _render_browser_text(text: Text, textContent: str) -> svg.Element:
     )
     return t
 
-def _render_exploded_text(text: Text) -> tuple[list[svg.Path], list[Geometry]]:
+def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
     leftX = text.geometry.x
     rightX = text.geometry.x+text.geometry.width
 
@@ -273,8 +282,6 @@ def _render_exploded_text(text: Text) -> tuple[list[svg.Path], list[Geometry]]:
         g = text.geometry
         x = 0
         y = 0
-        # horizontalPosition and verticalPosition are alignment "outside"
-        # the box
 
         #X-align Outside the box
         match text.horizontalPosition:
@@ -326,27 +333,20 @@ def _render_exploded_text(text: Text) -> tuple[list[svg.Path], list[Geometry]]:
     fs =  int(text.fontSize.replace("px", ""))
 
     ff = text.fontFamily.lower()
-    font_by_style = {
-        'regular': FontRenderer(f"{ff}.ttf", fs),
-        'bold': FontRenderer(f"{ff}-bold.ttf", fs),
-        'italic': FontRenderer(f"{ff}-italic.ttf", fs),
-        'bold-italic': FontRenderer(f"{ff}-bold-italic.ttf", fs),
-    }
 
-    # TODO: the alignment is broken, need to perform "holistic" alignment
-    # as multiple tokens end up making a larger block, which needs to be centered
-    # right now, the `off_` function only considers individual token sizes
     parsed: list[NewlineToken | TextToken] = parse_html(text.value)
 
     r_text = []
-    geoms = []
+    geom = None
 
     y_off = 0.0
     x_off = 0.0
+    ascent = 0.0
     for token in parsed:
+        print(token, y_off)
         if isinstance(token, NewlineToken):
             x_off = 0.0
-            y_off += font_by_style["regular"].font_height_px
+            y_off += get_font(ff, "regular", fs).font_height_px
             continue
         match token.bold, token.italic:
             case (False, False):
@@ -360,49 +360,54 @@ def _render_exploded_text(text: Text) -> tuple[list[svg.Path], list[Geometry]]:
             case default:
                 raise ValueError(f"Illegal token state {token}={default}")
 
-        f = font_by_style[style]
-        rendered = f.render(token.text)
-        for r in rendered:
-            x, y = off_(r)
-            x+= x_off
-            y+= y_off
-            x_off += r.w
-            path = r.path(x, y)
+        f = get_font(ff, style, fs)
+        # FIXME is 6px the right margin??
+        rendered = f.render(token.text, text.geometry.width-6)
+
+        for idx, line in enumerate(rendered):
+            ascent = line.ascent
+            x, y = off_(line)
+            if idx > 0 and idx < len(rendered):
+                y_off += line.h
+                x_off = 0
+            x += x_off
+            y += y_off
+            x_off += line.w
+            path = line.path(x, y)
             path.fill = token.color or text.strokeColor
 
-            geoms.append(Geometry(x, y-r.ascent, r.w, r.h))
+            geom = Geometry.stretch_to_contain(geom, Geometry(x, y-line.ascent, line.w, line.h))
             r_text.append(path)
-    return r_text, geoms
+
+    assert geom is not None
+    assert ascent != 0.0
+    # TODO: doing translate like this requires manual fix to the geometry
+    # it should be better
+    deltaY = -geom.height/2+ascent/2
+    translated = svg.G(elements=r_text, transform=[svg.Translate(0, deltaY)])
+    geom.y += deltaY
+    return translated, geom
 
 def render_text(text: Text, browser_text=False, explode=True):
-    # Text wrapping is not supported by `Text`
-    # Need to use `foreignObject` with a <span> HTML element
-    # Which is also used to align text vertically with `flex`
-
-    # FIXME DANGER this pipes HTML straight in
-    # - always need to close tags
-    # There's basic styling supported in the text element in drawio
-    # but also, you can inject arbitrary HTML if you double-click
-    # the text objects. WHY?
-    # FIXME: entities such as &nbsp; crash
 
     elems = []
-    paths, geoms = _render_exploded_text(text)
+    path, geom = _render_exploded_text(text)
     if explode:
-        elems.extend(paths)
+        elems.append(path)
+
+    # TODO: could probably use a native Text element
+    # which would depend on the user's fonts, instead
+    # of exploding the text to paths
 
     if browser_text:
         # "basic" sanitization for unsupported svg features
         textContent = text.value.replace("<br>", "<br/>").replace("&nbsp;", " ")
+        # DANGER this pipes HTML straight in
         elems.append(_render_browser_text(text, textContent))
 
     t = svg.G(elements=elems)
 
-    #assert len(geoms) == 1, "multiple geoms not supported yet"
-    #g = Geometry(0,0,0,0)
-    #for _g in geoms:
-    #    g.stretch_to_contain(_g)
-    return (t, geoms[0])
+    return (t, geom)
 
 
 def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
@@ -752,9 +757,9 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
 if __name__ == "__main__":
     f = Path("inputs/two-boxes-arrow.drawio")
     f = Path("inputs/text-align.drawio")
-    # f = Path("disk.drawio")
+    f = Path("disk.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=1)
+    doc = render_file(r, page=3)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
