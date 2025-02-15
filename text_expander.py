@@ -44,13 +44,12 @@ class FontRenderer:
         ret = []
 
         pen = SVGPathPen(self.glyph_set, self.scale)
-        for char in data:
+        for char in data.strip():
             glyph_name = self.cmap.get(ord(char))
             glyph = self.glyph_set[glyph_name]
             glyf = self.glyph_set.glyfTable[glyph_name]
-            # TODO: this is letter-level word-wrap
-            # Maybe better to do word-level?
-            if (x_offset + glyph.width) > max_w:
+            # this is word-level wrap
+            if char.isspace() and (x_offset + glyph.width) > max_w:
                 tl = TextLine(pen, x_offset * self.scale, height * self.scale, self.hhea.ascent * self.scale)
                 ret.append(tl)
                 x_offset = 0.0
