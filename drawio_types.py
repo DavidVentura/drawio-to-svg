@@ -62,7 +62,8 @@ class StrokeStyle(enum.Enum):
     SOLID = enum.auto()
     DOTTED_1 = enum.auto()  # 1 1
     DOTTED_2 = enum.auto()  # 1 2
-    DOTTED_3 = enum.auto()  # 1 4
+    DOTTED_3 = enum.auto()  # 1 3
+    DOTTED_4 = enum.auto()  # 1 4
     DASHED_1 = enum.auto()  # 2
     DASHED_2 = enum.auto()  # 8 8
     DASHED_3 = enum.auto()  # 12 12
@@ -74,8 +75,10 @@ class StrokeStyle(enum.Enum):
                 return StrokeStyle.DOTTED_1
             case "1 2":
                 return StrokeStyle.DOTTED_2
-            case "1 4":
+            case "1 3":
                 return StrokeStyle.DOTTED_3
+            case "1 4":
+                return StrokeStyle.DOTTED_4
             case None:
                 return StrokeStyle.DASHED_1
             case "8 8":
@@ -93,6 +96,8 @@ class StrokeStyle(enum.Enum):
             case StrokeStyle.DOTTED_2:
                 da = "1 2"
             case StrokeStyle.DOTTED_3:
+                da = "1 3"
+            case StrokeStyle.DOTTED_4:
                 da = "1 4"
             case StrokeStyle.DASHED_1:
                 da = "3 3"
@@ -146,7 +151,10 @@ class Cell:
     shape: Shape
     direction: "Direction"
     parent_node: Optional["Cell"]
+    rotation: int
     is_group: bool
+    flip_h: bool
+    flip_y: bool
 
     # Do not use. only for debugging
     _style: dict[str, str]

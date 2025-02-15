@@ -217,6 +217,9 @@ def parse_mxfile(xml_string: str) -> MxFile:
                     direction=Direction.from_str(styles.get("direction", "east")),
                     parent_node=parent_node,
                     is_group=styles.get("group") != None,
+                    rotation=int(styles.get("rotation", 0)),
+                    flip_h=bool(int(styles.get("flipH", 0))),
+                    flip_y=bool(int(styles.get("flipY", 0))),
                 )
             lut[c.id] = c
             cells.append((og_idx, c))
@@ -331,7 +334,10 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
                 raise ValueError(f"Wrong ta {default}")
         return (x, y)
 
-    assert text.fontFamily == "Helvetica"
+    #assert text.fontFamily == "Helvetica"
+    if text.fontFamily == "Verdana":
+        # HACK, fixme
+        text.fontFamily = "fallback"
 
     fs = int(text.fontSize.replace("px", ""))
 
@@ -398,11 +404,14 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
     # TODO: doing translate like this requires manual fix to the geometry
     # it should be better
     deltaY = -geom.height / 2 + ascent / 2
+    # FIXME: the 108pt font has 5px offset, idk why
+    #deltaY -= 5
     translated = svg.G(elements=r_text, transform=[svg.Translate(0, deltaY)])
     geom.y += deltaY
     return translated, geom
 
 
+# TODO: bools to enum
 def render_text(text: Text, browser_text=False, explode=True):
 
     elems = []
@@ -426,7 +435,6 @@ def render_text(text: Text, browser_text=False, explode=True):
 
 
 def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
-
     match cell.shape:
         case Shape.Rect:
             r = svg.Rect(
@@ -443,11 +451,18 @@ def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
         case Shape.Curly:
             # When rotating, the dimensions change!
             if cell.direction in [Direction.NORTH, Direction.SOUTH]:
-                w = cell.geometry.width
-                cell.geometry.width = cell.geometry.height
-                cell.geometry.height = w
+                old_w = cell.geometry.width
+                new_w = cell.geometry.height
+                old_h = cell.geometry.height
+                new_h = cell.geometry.width
+                cell.geometry.width = new_w
+                cell.geometry.height = new_h
+                # centerpoint should remain the same
+                cell.geometry.x += old_w/2 - new_w/2
+                cell.geometry.y += old_h/2 - new_h/2
                 pass
-            r = shapes.curly(cell.geometry, direction=cell.direction)
+            r = shapes.curly(cell.geometry, direction=cell.direction, rotation=cell.rotation, flip_h=cell.flip_h)
+        # how did an ellipse even WORK
 
     # TODO: rotation?
     bb = Geometry.from_geom(cell.geometry)
@@ -773,8 +788,9 @@ if __name__ == "__main__":
     f = Path("inputs/two-boxes-arrow.drawio")
     f = Path("inputs/text-align.drawio")
     f = Path("disk.drawio")
+    f = Path("inputs/diagrams.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=3)
+    doc = render_file(r, page=6)
     with open("output.svg", "w") as fd:
         print(doc, file=fd)
