@@ -1,7 +1,5 @@
 """
 Goals for now:
-    - Label rendering outside of box, size is wrong
-    - EdgeLabel support
     - Non-HTML text decoration
     - Non-boxes
       - split "Rect" from "Cell"
@@ -167,10 +165,15 @@ def parse_mxfile(xml_string: str) -> MxFile:
         cells = []
         _cells_with_idx = list(enumerate(model_elem.findall(".//mxCell")))
         # Arrows have `source` and `target` which may be unpopulated
+        # edgeLabels depend on parent
         # if we are going in rendering order, so we put the arrows last
         # generate the LUT with full nodes
         # then we sort them back based on the original index
-        _cells = sorted(_cells_with_idx, key=lambda t: t[1].get("edge") == "1")
+        # this should be generalized to ordering based on seen parents..
+        _cells = sorted(
+            _cells_with_idx,
+            key=lambda t: t[1].get("edge") == "1" or parse_styles(t[1].get("style", "")).get("edgeLabel") is not None,
+        )
         for og_idx, cell in _cells:
             styles = parse_styles(cell.get("style"))
             parent_node = lut.get(cell.get("parent"))
@@ -188,7 +191,27 @@ def parse_mxfile(xml_string: str) -> MxFile:
                 c = Text.from_styles(cell.get("id"), cell.get("value"), geometry, "middle", "center", styles)
             elif styles.get("edgeLabel") is not None:
                 # FIXME point/offset
-                c = EdgeLabel(cell.get("id"), cell.get("value"), geometry.x, geometry.y, Point(0, 0))
+                assert _g is not None
+                _p = _g.findall("mxPoint")
+                offset = Point(0, 0)
+                if _p:
+                    assert len(_p) == 1
+                    _p = _p[0]
+                    _px = int(_p.get("x", "0"))
+                    _py = int(_p.get("y", "0"))
+                    offset = Point(_px, _py)
+
+                assert parent_node is not None
+                if parent_node.id == "1":
+                    parent_node = None
+                assert geometry
+                if geometry.relative:
+                    assert parent_node is not None
+                    ep = EdgeLabelRelative(geometry.x, geometry.y, parent_node, offset)
+                else:
+                    ep = EdgeLabelAbsolute(geometry.x, geometry.y)
+
+                c = EdgeLabel(cell.get("id"), cell.get("value"), styles, ep)
             else:
                 if styles.get("dashed") is not None:
                     ss = StrokeStyle.from_dash_pattern(styles.get("dashPattern"))
@@ -261,6 +284,7 @@ def _render_browser_text(text: Text, textContent: str) -> svg.Element:
         case default:
             raise ValueError(f"Wrong vp {default}")
 
+    fs = text.fontSize if text.fontSize.endswith("px") else f"{text.fontSize}px"
     t = svg.ForeignObject(
         x=text.geometry.x,
         y=text.geometry.y,
@@ -272,7 +296,7 @@ def _render_browser_text(text: Text, textContent: str) -> svg.Element:
                 elements=[HTMLSpan(text=textContent, style="width: 100%")],
             ),
         ],
-        style=f"font-size: {text.fontSize}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
+        style=f"font-size: {fs}; text-align: {text.alignment}; font-family: {text.fontFamily}; overflow: visible;",
     )
     return t
 
@@ -334,14 +358,15 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
                 raise ValueError(f"Wrong ta {default}")
         return (x, y)
 
-    #assert text.fontFamily == "Helvetica"
+    # assert text.fontFamily == "Helvetica"
+    ff = text.fontFamily.lower()
     if text.fontFamily == "Verdana":
         # HACK, fixme
-        text.fontFamily = "fallback"
+        # this fallback is :!cp
+        ff = "Liberation Serif"
+        text.fontFamily = ff
 
     fs = int(text.fontSize.replace("px", ""))
-
-    ff = text.fontFamily.lower()
 
     parsed: list[NewlineToken | TextToken] = parse_html(text.value)
 
@@ -405,14 +430,98 @@ def _render_exploded_text(text: Text) -> tuple[svg.Element, Geometry]:
     # it should be better
     deltaY = -geom.height / 2 + ascent / 2
     # FIXME: the 108pt font has 5px offset, idk why
-    #deltaY -= 5
+    # normal font should be +1px offset?
+    if f.font_height_px == 108:
+        deltaY -= 6
+        pass
+    else:
+        deltaY += 1.5
     translated = svg.G(elements=r_text, transform=[svg.Translate(0, deltaY)])
     geom.y += deltaY
     return translated, geom
 
 
+def get_point_from_line(p1: Point, p2: Point, path_percentage: float, orthogonal_distance: float) -> Point:
+    """
+    Find a point relative to the line segment defined by this point and another point.
+
+    Args:
+        p1 (Point): Point that defines the line segment
+        p2 (Point): Point that defines the line segment
+        path_percentage (float): Percentage along the line from the midpoint.
+                               0 is middle, -1.0 is start point, 1.0 is end point
+        orthogonal_distance (float): Distance from the line. Positive values are to the left
+                                   of the direction vector, negative to the right
+
+    Returns:
+        Point: The calculated point
+    """
+    # First get the direction vector of the line
+    dx = p2.x - p1.x
+    dy = p2.y - p1.y
+
+    # Calculate the length of the vector
+    length = (dx * dx + dy * dy) ** 0.5
+
+    if length == 0:
+        raise ValueError("Points are identical - no valid point exists")
+
+    # Normalize the direction vector
+    dx /= length
+    dy /= length
+
+    # Calculate midpoint
+    mid_x = (p1.x + p2.x) / 2
+    mid_y = (p1.y + p2.y) / 2
+
+    # Convert percentage to actual distance from midpoint
+    path_distance = (path_percentage) * (length / 2)
+    point_on_line_x = mid_x + (dx * path_distance)
+    point_on_line_y = mid_y + (dy * path_distance)
+
+    # Now calculate the orthogonal offset
+    # Rotate direction vector 90 degrees counterclockwise
+    orthogonal_x = dy
+    orthogonal_y = -dx
+
+    # Apply orthogonal offset
+    final_x = point_on_line_x + (orthogonal_x * orthogonal_distance)
+    final_y = point_on_line_y + (orthogonal_y * orthogonal_distance)
+
+    return Point(final_x, final_y)
+
+
+def render_edge_label(el: EdgeLabel) -> tuple[svg.G, Geometry]:
+    if isinstance(el.positioning, EdgeLabelRelative):
+        el.positioning.orthogonalDistance
+    match el.positioning:
+        case EdgeLabelAbsolute(x, y):
+            g = Geometry(x, y, 0, 0)
+        case EdgeLabelRelative(pathPercentage, orthogonalDistance, parent, offset):
+            print(pathPercentage, offset)
+            assert isinstance(parent.source, Point)
+            assert isinstance(parent.target, Point)
+
+            p = get_point_from_line(parent.source, parent.target, pathPercentage, orthogonalDistance)
+            # if pathPercentage is 0, we should start from the middle
+            # the offset is absolute
+            # TODO: pathPercentage, orthogonalDistance
+            # orthogonalDistance is absolute
+            g = Geometry(p.x + offset.x, p.y + offset.y, 0, 0)
+        case default:
+            assert False, default
+
+    # TODO: middle/center are hardcoded, but if they were not, what's the actual size of the
+    # bounding box?
+    vp = "middle"
+    hp = "center"
+
+    t = Text.from_styles("idk", el.value, g, vp, hp, el.styles)
+    return render_text(t)
+
+
 # TODO: bools to enum
-def render_text(text: Text, browser_text=False, explode=True):
+def render_text(text: Text, browser_text=False, explode=True) -> tuple[svg.G, Geometry]:
 
     elems = []
     path, geom = _render_exploded_text(text)
@@ -458,8 +567,8 @@ def render_rect(cell: Cell) -> tuple[list[svg.Element], Geometry]:
                 cell.geometry.width = new_w
                 cell.geometry.height = new_h
                 # centerpoint should remain the same
-                cell.geometry.x += old_w/2 - new_w/2
-                cell.geometry.y += old_h/2 - new_h/2
+                cell.geometry.x += old_w / 2 - new_w / 2
+                cell.geometry.y += old_h / 2 - new_h / 2
                 pass
             r = shapes.curly(cell.geometry, direction=cell.direction, rotation=cell.rotation, flip_h=cell.flip_h)
         # how did an ellipse even WORK
@@ -714,8 +823,15 @@ def find_best_path(sp: Point, tp: Point, source: Cell, target: Cell) -> list[Poi
     return points
 
 
-def render_file(r: MxFile, page=0) -> svg.SVG:
-    root = r.diagrams[page].model.root
+def render_file(r: MxFile, page_name: str) -> svg.SVG:
+    page = None
+    for _page in r.diagrams:
+        if _page.name == page_name:
+            page = _page
+            break
+    if page is None:
+        raise ValueError(f"No page named {page_name}")
+    root = page.model.root
 
     elements = []
     main_bb = None
@@ -732,7 +848,9 @@ def render_file(r: MxFile, page=0) -> svg.SVG:
             elements.append(svge)
             continue
         elif isinstance(cell, EdgeLabel):
-            print("ignoring edgelabel")
+            svge, bb = render_edge_label(cell)
+            main_bb = Geometry.stretch_to_contain(main_bb, bb)
+            elements.append(svge)
             # raise NotImplementedError
             continue
         if cell.is_group:
@@ -791,6 +909,6 @@ if __name__ == "__main__":
     f = Path("inputs/diagrams.drawio")
     with f.open() as fd:
         r = parse_mxfile(fd.read())
-    doc = render_file(r, page=6)
+    doc = render_file(r, page_name="font")
     with open("output.svg", "w") as fd:
         print(doc, file=fd)

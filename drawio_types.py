@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math
 import enum
 
@@ -34,7 +35,8 @@ class Geometry:
 
     def stretch_to_contain_point(self: "Geometry", item: "Point", stroke_width: float) -> "Geometry":
         hw = stroke_width / 2
-        return self.stretch_to_contain(Geometry(item.x - hw, item.y - hw, item.x + hw, item.y + hw))
+        g = Geometry(item.x - hw, item.y - hw, stroke_width, stroke_width)
+        return self.stretch_to_contain(g)
 
     def stretch_to_contain(self: "Geometry | None", item: "Geometry") -> "Geometry":
         if self is None:
@@ -199,12 +201,27 @@ class Cell:
 
 
 @dataclass
+class EdgeLabelRelative:
+    pathPercentage: float
+    """0 is the middle of the parent arrow"""
+    orthogonalDistance: float
+    """Absolute, in pixels"""
+    parent: "Arrow"
+    offset: "Point"
+
+
+@dataclass
+class EdgeLabelAbsolute:
+    x: float
+    y: float
+
+
+@dataclass
 class EdgeLabel:
     id: str
     value: str
-    pathPercentage: float
-    orthogonalDistance: float
-    offset: "Point"
+    styles: dict[str, str]
+    positioning: EdgeLabelAbsolute | EdgeLabelRelative
     __doc__ = """
     EdgeLabel abuses the cell format quite a bit:
 
@@ -296,6 +313,11 @@ class Point:
     def __mul__(self, other: float) -> "Point":
         return Point(self.x * other, self.y * other)
 
+    def midpoint(self, other: Point) -> Point:
+        mid_x = (self.x + other.x) / 2
+        mid_y = (self.y + other.y) / 2
+        return Point(mid_x, mid_y)
+
     def normalized(self) -> "Point":
         if self.x == 0:
             x = 0
@@ -320,6 +342,34 @@ class Point:
     def contains(self, other: "Point") -> bool:
         # For interface matching with Cell
         return False
+
+    def orthogonal_point(self, other: Point, offset: float) -> Point:
+        # Get the direction vector of the line
+        dx = other.x - self.x
+        dy = other.y - self.y
+
+        # Calculate the length of the vector
+        length = (dx * dx + dy * dy) ** 0.5
+
+        if length == 0:
+            raise ValueError("Points are identical - no valid orthogonal point exists")
+
+        # Normalize the direction vector
+        dx /= length
+        dy /= length
+
+        # Rotate 90 degrees counterclockwise to get orthogonal vector
+        # [0 -1]  [dx] = [-dy]
+        # [1  0]  [dy] = [dx]
+        orthogonal_x = -dy
+        orthogonal_y = dx
+
+        # Calculate midpoint of the line segment
+        mid_x = (self.x + other.x) / 2
+        mid_y = (self.y + other.y) / 2
+
+        # Move from midpoint in orthogonal direction by offset distance
+        return Point(mid_x + orthogonal_x * offset, mid_y + orthogonal_y * offset)
 
 
 @dataclass
